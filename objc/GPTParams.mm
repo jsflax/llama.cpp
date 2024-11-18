@@ -394,6 +394,14 @@
     gpt_params.n_chunks = nChunks;
 }
 
+- (BOOL)conversation {
+    return gpt_params.conversation;
+}
+
+- (void)setConversation:(BOOL)conversation {
+    gpt_params.conversation = conversation;
+}
+
 - (int32_t)nParallel {
     return gpt_params.n_parallel;
 }
@@ -592,6 +600,13 @@
     gpt_params.model = [modelPath cStringUsingEncoding:NSUTF8StringEncoding];
 }
 
+- (NSString *)promptFile {
+    return [NSString stringWithCString:gpt_params.prompt_file.c_str() encoding:NSUTF8StringEncoding];
+}
+- (void)setPromptFile:(NSString *)promptFile {
+    gpt_params.prompt_file = [promptFile cStringUsingEncoding:NSUTF8StringEncoding];
+}
+
 - (NSString *)pathPromptCache {
     return [[NSString alloc] initWithCString:gpt_params.path_prompt_cache.c_str() encoding:NSUTF8StringEncoding];
 }
@@ -650,6 +665,15 @@
 - (void)setInteractiveFirst:(BOOL)interactiveFirst {
     gpt_params.interactive_first = interactiveFirst;
 }
+
+- (void)setContextShift:(BOOL)contextShift {
+    gpt_params.ctx_shift = contextShift;
+}
+
+- (BOOL)contextShift {
+    return gpt_params.ctx_shift;
+}
+
 - (id)copyWithZone:(NSZone *)zone {
     GPTParams *copy = [[[self class] allocWithZone:zone] init];
     

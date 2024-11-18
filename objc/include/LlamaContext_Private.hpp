@@ -4,9 +4,12 @@
 #import "LlamaContext.h"
 #import "../../common/common.h"
 
+@class GPTParams;
+
 @interface LlamaContext()
 
-- (instancetype)initWithContext:(llama_context *)context;
+- (instancetype)initWithContext:(llama_context *)context model:(llama_model *)model
+                                commonParams:(GPTParams *)params;
 
 - (std::vector<llama_token>)tokenize:(NSString *)text
                           addSpecial:(BOOL)addSpecial

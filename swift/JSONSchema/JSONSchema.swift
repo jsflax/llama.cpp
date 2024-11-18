@@ -79,6 +79,14 @@ public struct _JSONFunctionSchema: Codable {
             self.enum = nil
         }
         
+        public init(type: UUID.Type, description: String?) {
+            self.type = "string"
+            self.description = description
+            self.items = nil
+            self.enum = nil
+        }
+        
+        
         public init<T: CaseIterable>(type: T.Type, description: String?) where T: RawRepresentable,
         T: StringProtocol {
             self.type = "string"

@@ -52,6 +52,8 @@ typedef int32_t LlamaToken;
                tokens:(const LlamaToken *)tokens
           nTokenCount:(size_t)nTokenCount;
 
+- (void)reset;
+
 @end
 
 #endif /* LlamaContext_h */

@@ -60,7 +60,7 @@ struct LlamaSessionSuite {
         params.cpuParams.nThreads = 8
         params.cpuParamsBatch.nThreads = 8
         params.nBatch = 1024
-        params.nGpuLayers = 1024
+        params.nGpuLayers = 100
         params.chatTemplate = """
         <|system|>
         {system_message}</s>
@@ -132,12 +132,12 @@ struct LlamaSessionSuite {
     // MARK: Tool Test
     @Test func llamaToolSession() async throws {
         let params = try await baseParams(url: "https://huggingface.co/bartowski/Llama-3-Groq-8B-Tool-Use-GGUF/resolve/main/Llama-3-Groq-8B-Tool-Use-Q8_0.gguf?download=true", to: "llama_tools.gguf")
-        let fm = FileManager.default
-        let tmpDir = fm.temporaryDirectory
-        let cacheURL = tmpDir.appending(path: "cache")
-        params.pathPromptCache = cacheURL.path()
-        params.logging = true
-        defer { try? fm.removeItem(at: cacheURL) }
+//        let fm = FileManager.default
+//        let tmpDir = fm.temporaryDirectory
+//        let cacheURL = tmpDir.appending(path: "cache")
+//        params.pathPromptCache = cacheURL.path()
+//        params.logging = true
+//        defer { try? fm.removeItem(at: cacheURL) }
         let llama = try await MyLlama(params: params)
         var output = try await llama.infer("What's my favorite animal?")
         #expect(output.contains("cat"))
@@ -145,6 +145,50 @@ struct LlamaSessionSuite {
         #expect(output.contains("autumn"))
     }
 
+    // MARK: Tool Test
+    @Test func llamaToolSessionVerbosePrompt() async throws {
+        let params = try await baseParams(url: "https://huggingface.co/bartowski/Llama-3-Groq-8B-Tool-Use-GGUF/resolve/main/Llama-3-Groq-8B-Tool-Use-Q8_0.gguf?download=true", to: "llama_tools.gguf")
+        params.nCtx = 1024
+        params.nPredict = 512
+        params.nBatch = 512
+//        let fm = FileManager.default
+//        let tmpDir = fm.temporaryDirectory
+//        let cacheURL = tmpDir.appending(path: "cache")
+//        params.pathPromptCache = cacheURL.path()
+        params.logging = true
+//        defer { try? fm.removeItem(at: cacheURL) }
+        let llama = try await MyLlama(params: params)
+        let output = try await llama.infer(
+        """
+        SUM UP THESE PARAGRAPH BLOCKS FOR ME:
+
+        This is a regular paragraph block. Professionally productize highly efficient results with world-class core competencies. Objectively matrix leveraged architectures vis-a-vis error-free applications. Completely maximize customized portals via fully researched metrics. Enthusiastically generate premier action items through web-enabled e-markets. Efficiently parallel task holistic intellectual capital and client-centric markets.
+
+        This is a center aligned paragraph block. Professionally productize highly efficient results with world-class core competencies. Objectively matrix leveraged architectures vis-a-vis error-free applications. Completely maximize customized portals via fully researched metrics. Enthusiastically generate premier action items through web-enabled e-markets. Efficiently parallel task holistic intellectual capital and client-centric markets.
+
+        This is a right aligned paragraph block. Professionally productize highly efficient results with world-class core competencies. Objectively matrix leveraged architectures vis-a-vis error-free applications. Completely maximize customized portals via fully researched metrics. Enthusiastically generate premier action items through web-enabled e-markets. Efficiently parallel task holistic intellectual capital and client-centric markets.
+
+        This is a paragraph block with a drop cap. Professionally productize highly efficient results with world-class core competencies. Objectively matrix leveraged architectures vis-a-vis error-free applications. Completely maximize customized portals via fully researched metrics. Enthusiastically generate premier action items through web-enabled e-markets. Efficiently parallel task holistic intellectual capital and client-centric markets.
+
+        This is a small paragraph block. Professionally productize highly efficient results with world-class core competencies. Objectively matrix leveraged architectures vis-a-vis error-free applications. Completely maximize customized portals via fully researched metrics. Enthusiastically generate premier action items through web-enabled e-markets. Efficiently parallel task holistic intellectual capital and client-centric markets.
+
+        This is a medium paragraph block. Professionally productize highly efficient results with world-class core competencies. Objectively matrix leveraged architectures vis-a-vis error-free applications. Completely maximize customized portals via fully researched metrics. Enthusiastically generate premier action items through web-enabled e-markets. Efficiently parallel task holistic intellectual capital and client-centric markets.
+        
+        This is a regular paragraph block. Professionally productize highly efficient results with world-class core competencies. Objectively matrix leveraged architectures vis-a-vis error-free applications. Completely maximize customized portals via fully researched metrics. Enthusiastically generate premier action items through web-enabled e-markets. Efficiently parallel task holistic intellectual capital and client-centric markets.
+
+        This is a center aligned paragraph block. Professionally productize highly efficient results with world-class core competencies. Objectively matrix leveraged architectures vis-a-vis error-free applications. Completely maximize customized portals via fully researched metrics. Enthusiastically generate premier action items through web-enabled e-markets. Efficiently parallel task holistic intellectual capital and client-centric markets.
+
+        This is a right aligned paragraph block. Professionally productize highly efficient results with world-class core competencies. Objectively matrix leveraged architectures vis-a-vis error-free applications. Completely maximize customized portals via fully researched metrics. Enthusiastically generate premier action items through web-enabled e-markets. Efficiently parallel task holistic intellectual capital and client-centric markets.
+
+        This is a paragraph block with a drop cap. Professionally productize highly efficient results with world-class core competencies. Objectively matrix leveraged architectures vis-a-vis error-free applications. Completely maximize customized portals via fully researched metrics. Enthusiastically generate premier action items through web-enabled e-markets. Efficiently parallel task holistic intellectual capital and client-centric markets.
+
+        This is a small paragraph block. Professionally productize highly efficient results with world-class core competencies. Objectively matrix leveraged architectures vis-a-vis error-free applications. Completely maximize customized portals via fully researched metrics. Enthusiastically generate premier action items through web-enabled e-markets. Efficiently parallel task holistic intellectual capital and client-centric markets.
+
+        This is a medium paragraph block. Professionally productize highly efficient results with world-class core competencies. Objectively matrix leveraged architectures vis-a-vis error-free applications. Completely maximize customized portals via fully researched metrics. Enthusiastically generate premier action items through web-enabled e-markets. Efficiently parallel task holistic intellectual capital and client-centric markets.
+        """)
+        print(output)
+    }
+    
     // MARK: Session dealloc Test
     // Note this test will fail if run in parallel
     @Test func llamaToolSessionDealloc() async throws {

@@ -64,7 +64,15 @@ struct LlamaActorMacro: ExtensionMacro, MemberMacro {
             var index = 0
             for parameter in member.signature.parameterClause.parameters {
                 let firstName = parameter.firstName.text
-                let typeName = parameter.type.as(IdentifierTypeSyntax.self)!.name.text
+                var typeName: String
+                if let type = parameter.type.as(IdentifierTypeSyntax.self) {
+                    typeName = type.name.text
+                } else if let type = parameter.type.as(OptionalTypeSyntax.self),
+                    let type = type.wrappedType.as(IdentifierTypeSyntax.self) {
+                    typeName = type.name.text
+                } else {
+                    throw LlamaKitMacroError.message("Incorrect type for parameter \(parameter.debugDescription)")
+                }
                 guard case var .docLineComment(description) = comments[index + 1] else {
                     throw LlamaKitMacroError.message("Missing comment for \(firstName)")
                 }

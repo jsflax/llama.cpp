@@ -7,6 +7,8 @@
 
 @interface BlockingLineQueue : NSObject
 
+@property (atomic, strong) NSCondition *shiftCondition;
+
 - (void)addInputLine:(NSString *)line;
 - (NSString *)inputLine;
 - (void)addOutputLine:(NSString *)line;

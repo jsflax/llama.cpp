@@ -11,6 +11,8 @@ public enum AnyDecodable: Decodable {
     case int(Int)
     case double(Double)
     case bool(Bool)
+    case uuid(UUID)
+    
     case null
     // Add other cases as needed
 
@@ -30,7 +32,11 @@ public enum AnyDecodable: Decodable {
     init(_ value: Bool) {
         self = .bool(value)
     }
-
+    
+    init(_ value: UUID) {
+        self = .uuid(value)
+    }
+    
     init() {
         self = .null
     }
@@ -49,7 +55,9 @@ public enum AnyDecodable: Decodable {
             self = .bool(boolValue)
         } else if let stringValue = try? container.decode(String.self) {
             self = .string(stringValue)
-        } else {
+        } else if let uuidValue = try? container.decode(UUID.self) {
+            self = .uuid(uuidValue)
+        }  else {
             let context = DecodingError.Context(
                 codingPath: decoder.codingPath,
                 debugDescription: "Cannot decode AnyDecodable"
@@ -180,7 +188,9 @@ public actor LlamaToolSession {
         guard let line = await session.session.queue.outputLine() else {
             return
         }
-        _ = await callTool(line)
+        print(line)
+        let resp = await callTool(line)
+        print(resp)
     }
     
     private func callTool(_ call: ToolCall) async throws -> String {

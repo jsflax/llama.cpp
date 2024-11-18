@@ -31,12 +31,16 @@
         log = [NSMutableArray new];
         inputCondition = [[NSCondition alloc] init];
         outputCondition = [[NSCondition alloc] init];
+        _shiftCondition = [[NSCondition alloc] init];
     }
     return self;
 }
 
 - (void)addInputLine:(NSString *)line {
     [inputCondition lock];
+    while ([inputQueue count] > 0) {
+        [inputCondition wait];
+    }
     [inputQueue addObject:line];
     [log addObject:line];
     [inputCondition signal]; // Notify that a new input line is available
@@ -122,6 +126,7 @@
     
     GGMLThreadpool *threadpool;
     GGMLThreadpool *threadpool_batch;
+    NSMutableArray<NSNumber *> *contextTokens;
 }
 
 - (NSString *)chat_add_and_format:(std::vector<common_chat_msg> &) chat_msgs role:(const std::string &) role content:(const std::string &) content {
@@ -155,7 +160,9 @@ static BOOL file_is_empty(NSString *path) {
         os_log_inst = OS_LOG_DEFAULT;
     } else {
         os_log_inst = OS_LOG_DISABLED;
+        llama_log_set(llama_log_callback_null, NULL);
     }
+    contextTokens = [[NSMutableArray alloc] init];
     if (!params.modelPath) {
         [NSException raise:@"ModelFailure"
                     format:@"params.modelPath must be defined"];
@@ -219,7 +226,9 @@ static BOOL file_is_empty(NSString *path) {
                     format:@"threadpool create failed"];
     }
     
-    self.ctx = [[LlamaContext alloc] initWithContext:llama_init.context];
+    self.ctx = [[LlamaContext alloc] initWithContext:llama_init.context
+                                               model:llama_init.model
+                                              commonParams:self->_params];
     [self.ctx attachThreadpool:threadpool threadpoolBatch:threadpool_batch];
     self.model = [[LlamaModel alloc] init:llama_init.model];
     const int n_ctx_train = [self.model nCtxTrain];
@@ -483,377 +492,339 @@ static BOOL file_is_empty(NSString *path) {
     }
     return self;
 }
+static void llama_log_callback_null(ggml_log_level level, const char * text, void * user_data) {
+    (void) level;
+    (void) text;
+    (void) user_data;
+}
 
 // MARK: LastOutput
 - (NSString *)lastOutput {
     return [_mutableLastOutput copy];
 }
 
-- (void)start {
-    while ((n_remain != 0 && !is_antiprompt) || _params.interactive) {
-        // predict
-        if (!embd.empty()) {
-            // Note: (n_ctx - 4) here is to match the logic for commandline prompt handling via
-            // --prompt or --file which uses the same value.
-            int max_embd_size = n_ctx - 4;
+- (void)predict {
+    if (!embd.empty()) {
+        // Add embd tokens to contextTokens
+        for (auto& token : embd) {
+            [contextTokens addObject:[NSNumber numberWithInt:token]];
+        }
 
-            // Ensure the input doesn't exceed the context size by truncating embd if necessary.
-            if ((int) embd.size() > max_embd_size) {
-                const int skipped_tokens = (int) embd.size() - max_embd_size;
-                embd.resize(max_embd_size);
-
-                os_log_error(os_log_inst, "<<input too long: skipped %d token%s>>", skipped_tokens, skipped_tokens != 1 ? "s" : "");
-            }
-
-            if (_params.grpAttnN == 1) {
-                // infinite text generation via context shifting
-                // if we run out of context:
-                // - take the n_keep first tokens from the original prompt (via n_past)
-                // - take half of the last (n_ctx - n_keep) tokens and recompute the logits in batches
-
-                if (n_past + (int) embd.size() >= [_ctx nCtx]) {
-                    if (!_params.ctxShift) {
-                        os_log_debug(os_log_inst, "\n\n%s: context full and context shift is disabled => stopping\n", __func__);
-                        break;
-                    } else {
-                        if (_params.nPredict == -2) {
-                            os_log_debug(os_log_inst, "\n\n%s: context full and n_predict == -%d => stopping\n", __func__, _params.nPredict);
-                            break;
-                        }
-
-                        const int n_left    = n_past - _params.nKeep;
-                        const int n_discard = n_left/2;
-
-                        os_log_debug(os_log_inst, "context full, swapping: n_past = %d, n_left = %d, n_ctx = %lu, n_keep = %d, n_discard = %d\n",
-                                     n_past, n_left, static_cast<unsigned long>([_ctx nCtx]), _params.nKeep, n_discard);
-
-                        llama_kv_cache_seq_rm ([self.ctx cContext], 0, _params.nKeep            , _params.nKeep + n_discard);
-                        llama_kv_cache_seq_add([self.ctx cContext], 0, _params.nKeep + n_discard, n_past, -n_discard);
-
-                        n_past -= n_discard;
-
-                        os_log_debug(os_log_inst, "after swap: n_past = %d\n", n_past);
-
-                        os_log_debug(os_log_inst, "embd: %s\n", [self.ctx convertTokensToString:embd].c_str());
-
-                        os_log_debug(os_log_inst, "clear session path\n");
-                        [pathSession setString:@""];
-                    }
-                }
+        // Check if context is full
+        if ((int)contextTokens.count >= [self.ctx nCtx]) {
+            if (!_params.ctxShift) {
+                os_log_debug(os_log_inst, "\n\nContext is full and context shift is disabled => stopping\n");
+                abort();
             } else {
-                // context extension via Self-Extend
-                while (n_past >= ga_i + ga_w) {
-                    const int ib = (ga_n*ga_i)/ga_w;
-                    const int bd = (ga_w/ga_n)*(ga_n - 1);
-                    const int dd = (ga_w/ga_n) - ib*bd - ga_w;
-
-                    os_log_debug(os_log_inst, "\n");
-                    os_log_debug(os_log_inst, "shift: [%6ld, %6d] + %6d -> [%6ld, %6d]\n", static_cast<long>(ga_i), n_past, ib*bd, static_cast<long>(ga_i + ib*bd), n_past + ib*bd);
-                    os_log_debug(os_log_inst, "div:   [%6ld, %6ld] / %6ld -> [%6ld, %6ld]\n", static_cast<long>(ga_i + ib*bd), static_cast<long>(ga_i + ib*bd + ga_w), static_cast<long>(ga_n), static_cast<long>((ga_i + ib*bd)/ga_n), static_cast<long>((ga_i + ib*bd + ga_w)/ga_n));
-                    os_log_debug(os_log_inst, "shift: [%6ld, %6d] + %6d -> [%6ld, %6d]\n", static_cast<long>(ga_i + ib*bd + ga_w), n_past + ib*bd, dd, static_cast<long>(ga_i + ib*bd + ga_w + dd), n_past + ib*bd + dd);
-
-                    [self.ctx kvCacheSeqAdd:0 p0:ga_i p1:n_past delta:ib*bd];
-                    [self.ctx kvCacheSeqDiv:0 p0:ga_i + ib*bd p1:ga_i + ib*bd + ga_w delta:ga_n];
-                    [self.ctx kvCacheSeqAdd:0 p0:ga_i + ib*bd + ga_w p1:n_past + ib*bd delta:dd];
-
-                    n_past -= bd;
-
-                    ga_i += ga_w/ga_n;
-
-                    os_log_debug(os_log_inst, "\nn_past_old = %d, n_past = %d, ga_i = %ld\n\n", n_past + bd, n_past, static_cast<long>(ga_i));
+                if (_params.nPredict == -2) {
+                    os_log_debug(os_log_inst, "\n\nContext is full and n_predict == -2 => stopping\n");
+                    abort();
                 }
+
+                // Determine how many tokens to retain
+                int totalTokens = (int)contextTokens.count;
+                int tokens_to_retain = _params.nKeep > 0 ? _params.nKeep : 512;
+                tokens_to_retain = MIN(tokens_to_retain, totalTokens);
+
+                // Retain the last 'tokens_to_retain' tokens
+                NSRange range = NSMakeRange(totalTokens - tokens_to_retain, tokens_to_retain);
+                NSArray<NSNumber *> *retainedTokens = [contextTokens subarrayWithRange:range];
+
+                // Re-initialize the context
+                [self.ctx reset];
+
+                // Reset contextTokens to retained tokens
+                contextTokens = [retainedTokens mutableCopy];
+
+                // Re-evaluate the retained tokens
+                llama_token *tokensArray = (llama_token *)malloc(sizeof(llama_token) * contextTokens.count);
+                for (NSInteger idx = 0; idx < contextTokens.count; idx++) {
+                    tokensArray[idx] = [contextTokens[idx] intValue];
+                }
+
+                LlamaBatch *batch = [[LlamaBatch alloc] initWithBatch:llama_batch_get_one(tokensArray, (int)contextTokens.count)];
+
+                if ([self.ctx decode:batch]) {
+                    [NSException raise:@"EvalFailure" format:@"Failed to re-evaluate after context re-initialization"];
+                }
+
+                free(tokensArray);
+
+                // Update n_past to reflect the new context length
+                n_past = (int)contextTokens.count;
+
+                os_log_debug(os_log_inst, "After context re-initialization and re-evaluation: n_past = %d\n", n_past);
+
+                // **Update the GPTSampler with the retained tokens**
+                // Reset the sampler
+                [_smpl reset];
+
+                // Accept the retained tokens into the sampler
+                for (NSNumber *tokenNum in contextTokens) {
+                    llama_token token = [tokenNum intValue];
+                    // For re-evaluated tokens, we don't apply grammar rules
+                    [_smpl accept:token acceptGrammar:false];
+                }
+
+                // Clear session path if necessary
+                [pathSession setString:@""];
+            }
+        } else {
+            // Evaluate the new tokens as usual
+            llama_token *tokensArray = (llama_token *)malloc(sizeof(llama_token) * embd.size());
+            for (size_t idx = 0; idx < embd.size(); idx++) {
+                tokensArray[idx] = embd[idx];
             }
 
-            // try to reuse a matching prefix from the loaded session instead of re-eval (via n_past)
-            if (n_session_consumed < (int) session_tokens.size()) {
-                size_t i = 0;
-                for ( ; i < embd.size(); i++) {
-                    if (embd[i] != session_tokens[n_session_consumed]) {
-                        session_tokens.resize(n_session_consumed);
-                        break;
-                    }
+            LlamaBatch *batch = [[LlamaBatch alloc] initWithBatch:llama_batch_get_one(tokensArray, (int)embd.size())];
 
-                    n_past++;
-                    n_session_consumed++;
-
-                    if (n_session_consumed >= (int) session_tokens.size()) {
-                        ++i;
-                        break;
-                    }
-                }
-                if (i > 0) {
-                    embd.erase(embd.begin(), embd.begin() + i);
-                }
+            if ([self.ctx decode:batch]) {
+                [NSException raise:@"EvalFailure" format:@"Failed to evaluate"];
             }
 
-            for (int i = 0; i < (int) embd.size(); i += _params.nBatch) {
-                int n_eval = (int) embd.size() - i;
-                if (n_eval > _params.nBatch) {
-                    n_eval = _params.nBatch;
-                }
+            free(tokensArray);
 
-                os_log_debug(os_log_inst, "eval: %s\n", [self.ctx convertTokensToString:embd].c_str());
+            n_past += (int)embd.size();
 
-                
-                if ([self.ctx decode:[[LlamaBatch alloc] initWithBatch:llama_batch_get_one(&embd[i], n_eval)] ]) {
-                    [NSException raise:@"EvalFailure" format:@"failed to eval"];
-                }
-
-                n_past += n_eval;
-
-                os_log_debug(os_log_inst, "n_past = %d\n", n_past);
-                // Display total tokens alongside total time
-                if (_params.nPrint > 0 && n_past % _params.nPrint == 0) {
-                    os_log_debug(os_log_inst, "\n\033[31mTokens consumed so far = %d / %lu \033[0m\n", n_past, static_cast<unsigned long>([self.ctx nCtx]));
-                }
-            }
-
-            if (!embd.empty() && [pathSession length] > 0) {
-                session_tokens.insert(session_tokens.end(), embd.begin(), embd.end());
-                n_session_consumed = session_tokens.size();
+            // Accept the new tokens into the sampler
+            for (llama_token token : embd) {
+                // For new tokens, we don't apply grammar rules
+                [_smpl accept:token acceptGrammar:false];
             }
         }
+
+        // Clear embd after processing
+        embd.clear();
+    }
+}
+
+- (void)generateTokens {
+    // Optionally save the session
+    if ([pathSession length] > 0 && need_to_save_session && !_params.promptCacheRO) {
+        need_to_save_session = false;
+        [self.ctx saveStateFile:pathSession
+                         tokens:session_tokens.data()
+                    nTokenCount:session_tokens.size()];
+
+        os_log_debug(os_log_inst, "saved session to %s\n", [pathSession cStringUsingEncoding:NSUTF8StringEncoding]);
+    }
+
+    // Generate a new token
+    const llama_token idToken = [_smpl sample:self.ctx index:-1];
+
+    [_smpl accept:idToken acceptGrammar:true];
+
+    embd.push_back(idToken);
+
+    // Echo this to console
+    input_echo = true;
+
+    // Decrement remaining sampling budget
+    --n_remain;
+
+    os_log_debug(os_log_inst, "n_remain: %d\n", n_remain);
+}
+
+- (void)processInputTokens {
+    // Process remaining tokens in embd_inp
+    os_log_debug(os_log_inst, "preprocess: embd_inp.size(): %d, n_consumed: %d\n", (int) embd_inp.size(), n_consumed);
+    while ((int) embd_inp.size() > n_consumed) {
+        embd.push_back(embd_inp[n_consumed]);
+
+        // Push the prompt in the sampling context
+        [_smpl accept:embd_inp[n_consumed] acceptGrammar:false];
+
+        ++n_consumed;
+        if ((int) embd.size() >= _params.nBatch) {
+            break;
+        }
+    }
+    os_log_debug(os_log_inst, "postprocess: embd_inp.size(): %d, n_consumed: %d\n", (int) embd_inp.size(), n_consumed);
+}
+
+- (void)displayTokens:(std::vector<llama_token> &)tokens {
+    for (auto idToken : tokens) {
+        NSString *token_str = [self.ctx tokenToPiece:idToken special:_params.special];
+
+        // Console/Stream Output
+        os_log_info(os_log_inst, "%s", [token_str cStringUsingEncoding:NSUTF8StringEncoding]);
+
+        // Record Displayed Tokens To Log
+        if (tokens.size() > 1) {
+            // Incoming Requested Tokens
+            input_tokens.push_back(idToken);
+        } else {
+            // Outgoing Generated Tokens
+            output_tokens.push_back(idToken);
+            output_ss << [token_str cStringUsingEncoding:NSUTF8StringEncoding];
+            last_output_ss << [token_str cStringUsingEncoding:NSUTF8StringEncoding];
+            [self willChangeValueForKey:@"lastOutput"];
+            [_mutableLastOutput appendString:token_str];
+            [self didChangeValueForKey:@"lastOutput"];
+        }
+    }
+}
+
+- (void)checkForAntiprompt {
+    const int n_prev = 32;
+    NSString *last_output = [_smpl previousString:self.ctx n:n_prev];
+
+    is_antiprompt = false;
+
+    for (NSString *antiprompt in _params.antiPrompts) {
+        size_t extra_padding = _params.interactive ? 0 : 2;
+        size_t search_start_pos = [last_output length] > static_cast<size_t>([antiprompt length] + extra_padding)
+            ? [last_output length] - static_cast<size_t>([antiprompt length] + extra_padding)
+            : 0;
+
+        if ([last_output rangeOfString:antiprompt options:0 range:NSMakeRange(search_start_pos, last_output.length - search_start_pos)].location != NSNotFound) {
+            if (_params.interactive) {
+                isInteracting = true;
+            }
+            is_antiprompt = true;
+            break;
+        }
+    }
+
+    // Check for reverse prompt using special tokens
+    llama_token last_token = [_smpl last];
+    for (std::vector<llama_token> ids : antiprompt_ids) {
+        if (ids.size() == 1 && last_token == ids[0]) {
+            if (_params.interactive) {
+                isInteracting = true;
+            }
+            is_antiprompt = true;
+            break;
+        }
+    }
+
+    if (is_antiprompt) {
+        os_log_debug(os_log_inst, "found antiprompt: %s\n", [last_output cStringUsingEncoding:NSUTF8StringEncoding]);
+    }
+}
+
+- (void)handleUserInteraction {
+    os_log_debug(os_log_inst, "waiting for user input\n");
+
+    if (_params.conversation) {
+        // osLog_("\n> ");
+    }
+
+    if (_params.inputPrefixBOS) {
+        os_log_debug(os_log_inst, "adding input prefix BOS token\n");
+        embd_inp.push_back([self.model tokenBOS]);
+    }
+
+    std::string buffer;
+    if ([_params.inputPrefix length] > 0 && !_params.conversation) {
+        os_log_debug(os_log_inst, "appending input prefix: '%s'\n", [_params.inputPrefix cStringUsingEncoding:NSUTF8StringEncoding]);
+        os_log_info(os_log_inst, "%s", [_params.inputPrefix cStringUsingEncoding:NSUTF8StringEncoding]);
+    }
+
+    display = _params.displayPrompt;
+
+    if (!last_output_ss.str().empty()) {
+        auto str = last_output_ss.str();
+        last_output_ss.str("");
+        [_queue addOutputLine:[NSString stringWithCString:str.c_str() encoding:NSUTF8StringEncoding]];
+        [self willChangeValueForKey:@"lastOutput"];
+        _mutableLastOutput = [[NSMutableString alloc] init];
+        [self didChangeValueForKey:@"lastOutput"];
+    }
+
+    buffer = [[_queue inputLine] cStringUsingEncoding:NSUTF8StringEncoding];
+    if ([_queue isClosed]) {
+        return;
+    }
+
+    display = true;
+
+    // Add tokens to embd_inp only if the input buffer is non-empty
+    if (buffer.length() > 1) {
+        // Append input suffix if any
+        if ([[_params inputSuffix] length] > 0 && !_params.conversation) {
+            os_log_debug(os_log_inst, "appending input suffix: '%s'\n", [_params.inputSuffix cStringUsingEncoding:NSUTF8StringEncoding]);
+            os_log_info(os_log_inst, "%s", [_params.inputSuffix cStringUsingEncoding:NSUTF8StringEncoding]);
+        }
+
+        os_log_debug(os_log_inst, "buffer: '%s'\n", buffer.c_str());
+
+        const size_t original_size = embd_inp.size();
+
+        if (_params.escapeSequences) {
+            string_process_escapes(buffer);
+        }
+
+        bool format_chat = _params.conversation && _params.enableChatTemplate;
+        std::string user_inp = format_chat
+            ? [[self chat_add_and_format:chat_msgs role:"user" content:std::move(buffer)] cStringUsingEncoding:NSUTF8StringEncoding]
+            : std::move(buffer);
+
+        const auto line_pfx = [self.ctx tokenize:_params.inputPrefix addSpecial:false parseSpecial:true];
+        const auto line_inp = [self.ctx tokenize:[NSString stringWithCString:user_inp.c_str()
+                                                                   encoding:NSUTF8StringEncoding]
+                                     addSpecial:false
+                                   parseSpecial:format_chat];
+        const auto line_sfx = [self.ctx tokenize:_params.inputSuffix
+                                     addSpecial:false
+                                   parseSpecial:true];
+
+        os_log_debug(os_log_inst, "input tokens: %s\n", [self.ctx convertTokensToString:line_inp].c_str());
+
+        // If user stops generation mid-way, we must add EOT to finish model's last response
+        if (need_insert_eot && format_chat) {
+            llama_token eot = [self.model tokenEOT];
+            embd_inp.push_back(eot == -1 ? [self.model tokenEOS] : eot);
+            need_insert_eot = false;
+        }
+
+        embd_inp.insert(embd_inp.end(), line_pfx.begin(), line_pfx.end());
+        embd_inp.insert(embd_inp.end(), line_inp.begin(), line_inp.end());
+        embd_inp.insert(embd_inp.end(), line_sfx.begin(), line_sfx.end());
+
+        for (size_t i = original_size; i < embd_inp.size(); ++i) {
+            const llama_token token = embd_inp[i];
+            output_tokens.push_back(token);
+            output_ss << [[self.ctx tokenToPiece:token] cStringUsingEncoding:NSUTF8StringEncoding];
+        }
+        // Reset assistant message
+        assistant_ss.str("");
+
+        n_remain -= line_inp.size();
+        os_log_debug(os_log_inst, "n_remain: %d\n", n_remain);
+    } else {
+        os_log_debug(os_log_inst, "empty line, passing control back\n");
+    }
+
+    input_echo = false; // Do not echo this again
+}
+
+- (void)start {
+    while ((n_remain != 0 && !is_antiprompt) || _params.interactive) {
+        [self predict];
 
         embd.clear();
 
+        os_log_debug(os_log_inst, "embd_inp size: %d  n_consumed: %d\n", (int)embd_inp.size(), n_consumed);
         if ((int) embd_inp.size() <= n_consumed && !isInteracting) {
-            // optionally save the session on first sample (for faster prompt loading next time)
-            if ([pathSession length] > 0 && need_to_save_session && !_params.promptCacheRO) {
-                need_to_save_session = false;
-                [self.ctx saveStateFile:pathSession
-                                 tokens:session_tokens.data()
-                            nTokenCount:session_tokens.size()];
-
-                os_log_debug(os_log_inst, "saved session to %s\n", [pathSession cStringUsingEncoding:NSUTF8StringEncoding]);
-            }
-
-            const llama_token idToken = [_smpl sample:self.ctx index:-1];
-
-            [_smpl accept:idToken acceptGrammar:true];
-
-            embd.push_back(idToken);
-
-            // echo this to console
-            input_echo = true;
-
-            // decrement remaining sampling budget
-            --n_remain;
-
-            os_log_debug(os_log_inst, "n_remain: %d\n", n_remain);
+            [self generateTokens];
         } else {
-            // some user input remains from prompt or interaction, forward it to processing
-            os_log_debug(os_log_inst, "embd_inp.size(): %d, n_consumed: %d\n", (int) embd_inp.size(), n_consumed);
-            while ((int) embd_inp.size() > n_consumed) {
-                embd.push_back(embd_inp[n_consumed]);
-
-                // push the prompt in the sampling context in order to apply repetition penalties later
-                // for the prompt, we don't apply grammar rules
-                [_smpl accept:embd_inp[n_consumed] acceptGrammar:false];
-
-                ++n_consumed;
-                if ((int) embd.size() >= _params.nBatch) {
-                    break;
-                }
-            }
+            [self processInputTokens];
         }
 
-        // display text
         if (input_echo && display) {
-            
-            for (auto idToken : embd) {
-                NSString *token_str = [self.ctx tokenToPiece:idToken special:_params.special];
-
-                // Console/Stream Output
-                os_log_info(os_log_inst, "%s", [token_str cStringUsingEncoding:NSUTF8StringEncoding]);
-
-                // Record Displayed Tokens To Log
-                // Note: Generated tokens are created one by one hence this check
-                if (embd.size() > 1) {
-                    // Incoming Requested Tokens
-                    input_tokens.push_back(idToken);
-                    
-                } else {
-                    // Outgoing Generated Tokens
-                    output_tokens.push_back(idToken);
-                    output_ss << [token_str cStringUsingEncoding:NSUTF8StringEncoding];
-                    last_output_ss << [token_str cStringUsingEncoding:NSUTF8StringEncoding];
-                    [self willChangeValueForKey:@"lastOutput"];
-                    [_mutableLastOutput appendString:token_str];
-                    [self didChangeValueForKey:@"lastOutput"];
-                }
-                
-            }
+            [self displayTokens:embd];
         }
 
-        // if not currently processing queued inputs;
         if ((int) embd_inp.size() <= n_consumed) {
-            // check for reverse prompt in the last n_prev tokens
             if ([_params.antiPrompts count] > 0) {
-                const int n_prev = 32;
-                NSString *last_output = [_smpl previousString:self.ctx n:n_prev];
-
-                is_antiprompt = false;
-                // Check if each of the reverse prompts appears at the end of the output.
-                // If we're not running interactively, the reverse prompt might be tokenized with some following characters
-                // so we'll compensate for that by widening the search window a bit.
-                for (NSString *antiprompt in _params.antiPrompts) {
-                    size_t extra_padding = _params.interactive ? 0 : 2;
-                    size_t search_start_pos = [last_output length] > static_cast<size_t>([antiprompt length] + extra_padding)
-                    ? [last_output length] - static_cast<size_t>([antiprompt length] + extra_padding)
-                        : 0;
-
-                    // TODO: Check if correct
-                    if ([last_output rangeOfString:antiprompt options:0 range:NSMakeRange(search_start_pos, last_output.length - search_start_pos)].location != NSNotFound) {
-                        if (_params.interactive) {
-                            isInteracting = true;
-                        }
-                        is_antiprompt = true;
-                        break;
-                    }
-                }
-
-                // check for reverse prompt using special tokens
-                llama_token last_token = [_smpl last];
-                for (std::vector<llama_token> ids : antiprompt_ids) {
-                    if (ids.size() == 1 && last_token == ids[0]) {
-                        if (_params.interactive) {
-                            isInteracting = true;
-                        }
-                        is_antiprompt = true;
-                        break;
-                    }
-                }
-
-                if (is_antiprompt) {
-                    os_log_debug(os_log_inst, "found antiprompt: %s\n", [last_output cStringUsingEncoding:NSUTF8StringEncoding]);
-                }
+                [self checkForAntiprompt];
             }
 
-            // deal with end of generation tokens in interactive mode
-            
-            if ([self.model tokenIsEOG:[_smpl last]]) {
-                os_log_debug(os_log_inst, "found an EOG token\n");
-
-                if (_params.interactive) {
-                    if ([[_params antiPrompts] count] > 0) {
-                        // tokenize and inject first reverse prompt
-                        
-                        const auto first_antiprompt = [self.ctx tokenize:_params.antiPrompts[0] addSpecial:false parseSpecial:true];
-                        embd_inp.insert(embd_inp.end(), first_antiprompt.begin(), first_antiprompt.end());
-                        is_antiprompt = true;
-                    }
-
-                    if (_params.enableChatTemplate) {
-                        [self chat_add_and_format:chat_msgs
-                                             role:"assistant"
-                                          content:assistant_ss.str()];
-                    }
-                    isInteracting = true;
-                }
-            }
-
-            // if current token is not EOG, we add it to current assistant message
-            if (_params.conversation) {
-                const auto idToken = [_smpl last];
-                assistant_ss << [[self.ctx tokenToPiece:idToken special:false] cStringUsingEncoding:NSUTF8StringEncoding];
-            }
-
-            if (n_past > 0 && isInteracting) {
-                os_log_debug(os_log_inst, "waiting for user input\n");
-
-                if (_params.conversation) {
-//                    osLog_("\n> ");
-                }
-
-                if (_params.inputPrefixBOS) {
-                    os_log_debug(os_log_inst, "adding input prefix BOS token\n");
-                    embd_inp.push_back([self.model tokenBOS]);
-                }
-
-                std::string buffer;
-                if ([_params.inputPrefix length] > 0 && !_params.conversation) {
-                    os_log_debug(os_log_inst, "appending input prefix: '%s'\n", [_params.inputPrefix cStringUsingEncoding:NSUTF8StringEncoding]);
-                    os_log_info(os_log_inst, "%s", [_params.inputPrefix cStringUsingEncoding:NSUTF8StringEncoding]);
-                }
-
-                display = _params.displayPrompt;
-                
-                if (!last_output_ss.str().empty()) {
-                    auto str = last_output_ss.str();
-                    last_output_ss.str("");
-                    [_queue addOutputLine:[NSString stringWithCString:str.c_str() encoding:NSUTF8StringEncoding]];
-                    [self willChangeValueForKey:@"lastOutput"];
-                    _mutableLastOutput = [[NSMutableString alloc] init];
-                    [self didChangeValueForKey:@"lastOutput"];
-                    
-                }
-                
-                buffer = [[_queue inputLine] cStringUsingEncoding:NSUTF8StringEncoding];
-                if ([_queue isClosed]) {
-                    break;
-                }
-                
-                display = true;
-
-                // Add tokens to embd only if the input buffer is non-empty
-                // Entering a empty line lets the user pass control back
-                if (buffer.length() > 1) {
-                    // append input suffix if any
-                    if ([[self params].inputSuffix length] > 0 && !_params.conversation) {
-                        os_log_debug(os_log_inst, "appending input suffix: '%s'\n", [_params.inputSuffix cStringUsingEncoding:NSUTF8StringEncoding]);
-                        os_log_info(os_log_inst, "%s", [_params.inputSuffix cStringUsingEncoding:NSUTF8StringEncoding]);
-                    }
-
-                    os_log_debug(os_log_inst, "buffer: '%s'\n", buffer.c_str());
-
-                    const size_t original_size = embd_inp.size();
-
-                    if (_params.escapeSequences) {
-                        string_process_escapes(buffer);
-                    }
-
-                    bool format_chat = _params.conversation && _params.enableChatTemplate;
-                    std::string user_inp = format_chat
-                    ? [[self chat_add_and_format:chat_msgs role:"user" content:std::move(buffer)] cStringUsingEncoding:NSUTF8StringEncoding]
-                        : std::move(buffer);
-                    // TODO: one inconvenient of current chat template implementation is that we can't distinguish between user input and special tokens (prefix/postfix)
-                    const auto line_pfx = [self.ctx tokenize:_params.inputPrefix addSpecial:false parseSpecial:true];
-                    const auto line_inp = [self.ctx tokenize:[NSString stringWithCString:user_inp.c_str()
-                                                                           encoding:NSUTF8StringEncoding]
-                                             addSpecial:false
-                                           parseSpecial:format_chat];
-                    const auto line_sfx = [self.ctx tokenize:_params.inputSuffix
-                                             addSpecial:false
-                                           parseSpecial:true];
-
-                    os_log_debug(os_log_inst, "input tokens: %s\n", [self.ctx convertTokensToString:line_inp].c_str());
-
-                    // if user stop generation mid-way, we must add EOT to finish model's last response
-                    if (need_insert_eot && format_chat) {
-                        llama_token eot = [self.model tokenEOT];
-                        embd_inp.push_back(eot == -1 ? [self.model tokenEOS] : eot);
-                        need_insert_eot = false;
-                    }
-
-                    embd_inp.insert(embd_inp.end(), line_pfx.begin(), line_pfx.end());
-                    embd_inp.insert(embd_inp.end(), line_inp.begin(), line_inp.end());
-                    embd_inp.insert(embd_inp.end(), line_sfx.begin(), line_sfx.end());
-
-                    for (size_t i = original_size; i < embd_inp.size(); ++i) {
-                        const llama_token token = embd_inp[i];
-                        output_tokens.push_back(token);
-                        output_ss << [[self.ctx tokenToPiece:token] cStringUsingEncoding:NSUTF8StringEncoding];
-                    }
-                    // reset assistant message
-                    assistant_ss.str("");
-
-                    n_remain -= line_inp.size();
-                    os_log_debug(os_log_inst, "n_remain: %d\n", n_remain);
-                } else {
-                    os_log_debug(os_log_inst, "empty line, passing control back\n");
-                }
-
-                input_echo = false; // do not echo this again
+            if (n_past > 0
+                && isInteracting
+                && ([_params.antiPrompts count] > 0 ? is_antiprompt : true)) {
+                [self handleUserInteraction];
             }
 
             if (n_past > 0) {
@@ -864,21 +835,20 @@ static BOOL file_is_empty(NSString *path) {
             }
         }
 
-        // end of generation
-        if (!embd.empty() && [self.model tokenIsEOG:embd.back()] && !(_params.interactive)) {
+        // Check for end of generation tokens
+        if (!embd.empty() && [self.model tokenIsEOG:embd.back()] && !_params.interactive) {
             os_log_info(os_log_inst, " [end of text]\n");
             break;
         }
 
-        // In interactive mode, respect the maximum number of tokens and drop back to user input when reached.
-        // We skip this logic when n_predict == -1 (infinite) or -2 (stop at context size).
+        // Handle n_remain in interactive mode
         if (_params.interactive && n_remain <= 0 && _params.nPredict >= 0) {
             n_remain = _params.nPredict;
             isInteracting = true;
         }
     }
-    
-    NSLog(@"Loop over");
+
+    os_log_info(os_log_inst, "Loop over");
     [_queue addOutputLine:@""];
 }
 

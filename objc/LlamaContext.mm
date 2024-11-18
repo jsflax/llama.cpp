@@ -8,12 +8,18 @@
 
 @implementation LlamaContext {
     llama_context *ctx;
+    llama_model *model;
+    GPTParams *params;
 }
 
-- (instancetype)initWithContext:(llama_context *)context {
+- (instancetype)initWithContext:(llama_context *)context
+                          model:(llama_model *)model
+                   commonParams:(GPTParams *)params {
     self = [super init];
     if (self) {
         ctx = context;
+        self->model = model;
+        self->params = params;
     }
     return self;
 }
@@ -99,4 +105,14 @@ parseSpecial:(BOOL)parseSpecial {
                                  tokens, nTokenCount);
 }
 
+- (void)reset {
+    if (ctx) {
+        llama_free(ctx);
+    }
+    
+    ctx = llama_new_context_with_model(model, common_context_params_to_llama([params params]));
+    if (!ctx) {
+        [NSException raise:@"ContextReinitFailure" format:@"Failed to re-initialize the context"];
+    }
+}
 @end

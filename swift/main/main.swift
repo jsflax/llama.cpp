@@ -1,6 +1,7 @@
 import LlamaKit
 import WeatherKit
 import CoreLocation
+import HealthKit
 
 func downloadFile() async throws -> String {
     let fm = FileManager.default
@@ -35,32 +36,47 @@ func downloadFile() async throws -> String {
     @Tool public func getCurrentDate() -> String {
         Date.now.formatted(date: .long, time: .complete)
     }
+        
+    /// Generate a random UUID.
+    @Tool public func generateUUID() -> UUID {
+        UUID()
+    }
+    
+    /// Get the latest financial news.
+    @Tool public func getLatestFinancialNews() async throws -> String {
+        let (data, _) = try await URLSession.shared.data(from: URL(string: "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml")!)
+        return String(data: data, encoding: .utf8)!
+    }
 }
 
 let params = GPTParams()
 params.modelPath = try await downloadFile()
-params.nPredict = 512
-params.nCtx = 4096
+params.nPredict = 4096
+params.nCtx = 4096 * 4
 params.cpuParams.nThreads = 8
 params.cpuParamsBatch.nThreads = 8
-params.nBatch = 1024
-params.nGpuLayers = 1024
-let llama = try await MyLlama(params: params)
+params.nBatch = 4096
+params.nGpuLayers = 30
+params.logging = false
 
-while true {
-    print("Enter input: ", terminator: "")
-
-    // Read user input
-    if let userInput = readLine() {
-        if userInput.lowercased() == "exit" {
-            print("Exiting the loop.")
-            break
+_ = try await Task {
+    let llama = try await MyLlama(params: params)
+    
+    while true {
+        print("Enter input: ", terminator: "")
+        
+        // Read user input
+        if let userInput = readLine() {
+            if userInput.lowercased() == "exit" {
+                print("Exiting the loop.")
+                break
+            } else {
+                print("🧔🏽‍♂️: \(userInput)")
+                let response = try await llama.infer(userInput)
+                print("🤖: \(response)")
+            }
         } else {
-            print("🧔🏽‍♂️: \(userInput)")
-            let response = try await llama.infer(userInput)
-            print("🤖: \(response)")
+            print("Failed to read input.")
         }
-    } else {
-        print("Failed to read input.")
     }
-}
+}.value
