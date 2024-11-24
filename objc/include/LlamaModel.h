@@ -19,6 +19,7 @@ typedef int32_t LlamaToken;
 
 @interface LlamaModel : NSObject
 
+- (int)nEmbd;
 - (LlamaToken)tokenBOS;
 - (LlamaToken)tokenEOT;
 - (LlamaToken)tokenEOS;
@@ -27,6 +28,7 @@ typedef int32_t LlamaToken;
 - (BOOL)addBOSToken;
 - (BOOL)addEOSToken;
 - (BOOL)hasEncoder;
+- (BOOL)hasDecoder;
 - (NSString *)formatExample:(NSString *)tmpl;
 
 @end

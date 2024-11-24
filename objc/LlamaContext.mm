@@ -6,10 +6,67 @@
 #import "LlamaBatch_Private.hpp"
 #import "../../common/common.h"
 
+
+static void batch_decode(llama_context * ctx, llama_batch & batch, float * output, int n_seq, int n_embd, int embd_norm) {
+    const enum llama_pooling_type pooling_type = llama_pooling_type(ctx);
+    const struct llama_model * model = llama_get_model(ctx);
+
+    // clear previous kv_cache values (irrelevant for embeddings)
+    llama_kv_cache_clear(ctx);
+
+    // run model
+    if (llama_model_has_encoder(model) && !llama_model_has_decoder(model)) {
+        // encoder-only model
+        if (llama_encode(ctx, batch) < 0) {
+            [NSException raise:@"EncodingFailure" format:@"failed to encode"];
+        }
+    } else if (!llama_model_has_encoder(model) && llama_model_has_decoder(model)) {
+        // decoder-only model
+        if (llama_decode(ctx, batch) < 0) {
+            [NSException raise:@"DecodingFailure" format:@"failed to decode"];
+        }
+    }
+
+    for (int i = 0; i < batch.n_tokens; i++) {
+        if (!batch.logits[i]) {
+            continue;
+        }
+
+        const float * embd = nullptr;
+        int embd_pos = 0;
+
+        if (pooling_type == LLAMA_POOLING_TYPE_NONE) {
+            // try to get token embeddings
+            embd = llama_get_embeddings_ith(ctx, i);
+            embd_pos = i;
+            GGML_ASSERT(embd != NULL && "failed to get token embeddings");
+        } else {
+            // try to get sequence embeddings - supported only when pooling_type is not NONE
+            embd = llama_get_embeddings_seq(ctx, batch.seq_id[i][0]);
+            embd_pos = batch.seq_id[i][0];
+            GGML_ASSERT(embd != NULL && "failed to get sequence embeddings");
+        }
+
+        float * out = output + embd_pos * n_embd;
+        common_embd_normalize(embd, out, n_embd, embd_norm);
+    }
+}
+
 @implementation LlamaContext {
     llama_context *ctx;
-    llama_model *model;
     GPTParams *params;
+}
+
+- (instancetype)initWithParams:(GPTParams *)params {
+    self = [super init];
+    if (self) {
+        self->params = [params copy];
+        auto llama_init = common_init_from_params([params params]);
+        self->ctx = llama_init.context;
+        self->_model = [[LlamaModel alloc] init: llama_init.model];
+    }
+    return self;
+    
 }
 
 - (instancetype)initWithContext:(llama_context *)context
@@ -18,7 +75,7 @@
     self = [super init];
     if (self) {
         ctx = context;
-        self->model = model;
+        self->_model = [[LlamaModel alloc] init:model];
         self->params = params;
     }
     return self;
@@ -27,6 +84,7 @@
 - (void)dealloc
 {
     llama_free(ctx);
+    [self.model dealloc];
     [super dealloc];
 }
 
@@ -40,6 +98,10 @@
     return llama_n_ctx(ctx);
 }
 
+- (LlamaPoolingType)poolingType {
+    return LlamaPoolingType(llama_pooling_type(self->ctx));
+}
+
 - (BOOL)loadStateFile:(NSString *)pathSession
             tokensOut:(llama_token *)tokensOut
         nTokenCpacity:(size_t)nTokenCapacity
@@ -47,15 +109,19 @@
     return llama_state_load_file(ctx, [pathSession cStringUsingEncoding:NSUTF8StringEncoding], tokensOut, nTokenCapacity, nTokenCountOut);
 }
 
-- (LlamaModel *)model {
-    auto model = llama_get_model(ctx);
-    return [[LlamaModel alloc] init:std::remove_const_t<llama_model *>(model)];
+- (NSArray<NSNumber *> *)tokenize:(NSString *)text
+                       addSpecial:(BOOL)addSpecial
+                     parseSpecial:(BOOL)parseSpecial {
+    NSMutableArray<NSNumber *> *tokens = [[NSMutableArray alloc] init];
+    for (auto& token : [self cppTokenize:text addSpecial:addSpecial parseSpecial:parseSpecial]) {
+        [tokens addObject:[[NSNumber alloc] initWithInt:token]];
+    }
+    return tokens;
 }
 
-- (std::vector<llama_token>)tokenize:(NSString *)text
-addSpecial:(BOOL)addSpecial
-parseSpecial:(BOOL)parseSpecial {
-    
+- (std::vector<llama_token>)cppTokenize:(NSString *)text
+                             addSpecial:(BOOL)addSpecial
+                           parseSpecial:(BOOL)parseSpecial {
     return common_tokenize(ctx, [text cStringUsingEncoding:NSUTF8StringEncoding], addSpecial, parseSpecial);
 }
 
@@ -85,6 +151,12 @@ parseSpecial:(BOOL)parseSpecial {
     llama_kv_cache_seq_div(ctx, sequenceId, p0, p1, delta);
 }
 
+- (BOOL)kvCacheSeqRm:(LlamaSequenceId)sequenceId
+                  p0:(LlamaPosition)p0
+                  p1:(LlamaPosition)p1 {
+    return llama_kv_cache_seq_rm(ctx, sequenceId, p0, p1);
+}
+
 - (NSString *)tokenToPiece:(LlamaToken)token {
     return [self tokenToPiece:token special:YES];
 }
@@ -105,12 +177,16 @@ parseSpecial:(BOOL)parseSpecial {
                                  tokens, nTokenCount);
 }
 
+- (void)decode:(LlamaBatch *)batch output:(float *)output nSeq:(int)nSeq nEmbd:(int)nEmbd embdNorm:(int)embdNorm {
+    batch_decode(ctx, [batch cBatch], output, nSeq, nEmbd, embdNorm);
+}
+
 - (void)reset {
     if (ctx) {
         llama_free(ctx);
     }
     
-    ctx = llama_new_context_with_model(model, common_context_params_to_llama([params params]));
+    ctx = llama_new_context_with_model([self.model cModel], common_context_params_to_llama([params params]));
     if (!ctx) {
         [NSException raise:@"ContextReinitFailure" format:@"Failed to re-initialize the context"];
     }

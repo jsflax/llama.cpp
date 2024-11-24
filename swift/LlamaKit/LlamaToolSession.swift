@@ -1,4 +1,5 @@
 import Foundation
+import RegexBuilder
 
 
 public protocol DynamicCallable: Sendable {
@@ -12,6 +13,7 @@ public enum AnyDecodable: Decodable {
     case double(Double)
     case bool(Bool)
     case uuid(UUID)
+    case date(Date)
     
     case null
     // Add other cases as needed
@@ -36,7 +38,9 @@ public enum AnyDecodable: Decodable {
     init(_ value: UUID) {
         self = .uuid(value)
     }
-    
+    init(_ value: Date) {
+        self = .date(value)
+    }
     init() {
         self = .null
     }
@@ -53,11 +57,19 @@ public enum AnyDecodable: Decodable {
             self = .double(doubleValue)
         } else if let boolValue = try? container.decode(Bool.self) {
             self = .bool(boolValue)
-        } else if let stringValue = try? container.decode(String.self) {
-            self = .string(stringValue)
         } else if let uuidValue = try? container.decode(UUID.self) {
             self = .uuid(uuidValue)
-        }  else {
+        }  else if let dateValue = try? container.decode(Date.self) {
+            self = .date(dateValue)
+        } else if let stringValue = try? container.decode(String.self) {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "yyyy-MM-dd"
+            if let date = formatter.date(from: stringValue) {
+                self = .date(date)
+            } else {
+                self = .string(stringValue)
+            }
+        } else {
             let context = DecodingError.Context(
                 codingPath: decoder.codingPath,
                 debugDescription: "Cannot decode AnyDecodable"
@@ -160,37 +172,89 @@ public actor LlamaToolSession {
     
     public private(set) var tools: [String: (DynamicCallable, _JSONFunctionSchema)]
     
+    // Define a Regex using RegexBuilder
+    let toolCallRegex = Regex {
+        "<tool_call>"      // Match the opening tag
+        ZeroOrMore(.whitespace) // Allow optional whitespaces or newlines
+        Capture {
+            ZeroOrMore(.any, .reluctant) // Lazily capture all content inside
+        }
+        ZeroOrMore(.whitespace) // Allow optional whitespaces or newlines
+        "</tool_call>"     // Match the closing tag
+    }
+    
+    var jsonDecoder: JSONDecoder {
+        let decoder = JSONDecoder()
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        decoder.dateDecodingStrategy = .formatted(formatter)
+        return decoder
+    }
+    
     public init(params: GPTParams,
                 tools: [String: (DynamicCallable, _JSONFunctionSchema)]) async throws {
         self.tools = tools
         let encoded = try JSONEncoder().encode(self.tools.values.map(\.1))
         let prompt = """
         <|begin_of_text|><|start_header_id|>system<|end_header_id|>
-        
-        \(params.prompt ?? "")
 
         You are a function calling AI model. You are provided with function signatures within <tools></tools> XML tags. You may call one or more functions to assist with the user query. Don't make assumptions about what values to plug into functions. For each function call return a json object with function name and arguments within <tool_call></tool_call> XML tags as follows:
         <tool_call>
         {"name": <function-name>,"arguments": <args-dict>}
         </tool_call>
 
-        Feel free to chain tool calls, e.g., if you need the user's location to find points of interest near them, fetch the user's location first.
-
         <tools> \(String(data: encoded, encoding: .utf8)!) </tools>
+        <|eot_id|><|start_header_id|>assistant<|end_header_id|>
+        <tool_call>
+        {"id": 0, "name": "getCurrentDate","arguments": {}}
+        </tool_call>
+        <|eot_id|><|start_header_id|>user<|end_header_id|>
+        <tool_response>
+        {"id": 0, "response": "\(Date.now.formatted(date: .long, time: .complete))"}
+        </tool_response>
+        \(params.prompt)
         <|eot_id|><|start_header_id|>assistant<|end_header_id|>
         """
         params.prompt = prompt
+        
         params.interactive = true
         params.antiPrompts.append("<|eot_id|>")
         params.inputPrefix = "<|start_header_id|>user<|end_header_id|>"
         params.inputSuffix = "<|eot_id|><|start_header_id|>assistant<|end_header_id|>"
+        params.nKeep = Int32(prompt.count + params.inputSuffix.count)
+        params.special = true
+        let hasExistingPromptFile = params.promptFile.map {
+            (try? FileManager.default.attributesOfItem(atPath: $0)) ?? [:]
+        }.map {
+            ($0[.size] as? UInt64) ?? 0
+        }.map {
+            $0 > 0
+        } ?? false
+        
         session = try await LlamaChatSession(params: params, flush: false)
+
+        guard !hasExistingPromptFile else {
+            return
+        }
         guard let line = await session.session.queue.outputLine() else {
             return
         }
-        print(line)
-        let resp = await callTool(line)
-        print(resp)
+        // Use the new Swift Regex to extract content between <tool_call> and </tool_call>
+        print(try await checkToolCalls(llmInput: line))
+    }
+    
+    private func callToolV2(_ call: ToolCall) async throws -> String {
+        guard let tool = tools[call.name] else {
+            fatalError()
+        }
+        let callable = tool.0
+        
+        let response = try await callable.dynamicallyCall(withKeywordArguments: call.arguments)
+        return """
+        <tool_response>
+        {"id": \(call.id), result: \(response)}
+        </tool_response>
+        """
     }
     
     private func callTool(_ call: ToolCall) async throws -> String {
@@ -203,10 +267,11 @@ public actor LlamaToolSession {
         return try await callable.dynamicallyCall(withKeywordArguments: call.arguments)
     }
 
+    // MARK: Call Tool
     private func callTool(_ call: String) async -> String? {
         var nxt: String?
         do {
-            let toolCall = try JSONDecoder().decode(ToolCall.self, from: call.data(using: .utf8)!)
+            let toolCall = try jsonDecoder.decode(ToolCall.self, from: call.data(using: .utf8)!)
             guard let tool = tools[toolCall.name] else {
                 fatalError()
             }
@@ -223,7 +288,7 @@ public actor LlamaToolSession {
                 """)
                 // TODO: If this decodes correctly, we should tail this into this method
                 // TODO: so that we do not decode twice
-                if let _ = try? JSONDecoder().decode(ToolCall.self, from: nxt!.data(using: .utf8)!) {
+                if let _ = try? jsonDecoder.decode(ToolCall.self, from: nxt!.data(using: .utf8)!) {
                     return await callTool(nxt!)
                 }
             } catch {
@@ -238,12 +303,24 @@ public actor LlamaToolSession {
         return nxt
     }
     
+    private func checkToolCalls(llmInput: String) async throws -> String {
+        var responses: [String] = []
+        for match in llmInput.matches(of: toolCallRegex) {
+            let extractedText = String(match.output.1) // The first capture group
+            print("Extracted Text: \(extractedText)")
+            let call = try jsonDecoder.decode(ToolCall.self, from: extractedText.data(using: .utf8)!)
+            responses.append(try await callToolV2(call))
+        }
+        if !responses.isEmpty {
+            return try await checkToolCalls(llmInput: await session.infer(message: responses.joined(separator: "\n")))
+        } else {
+            return llmInput
+        }
+    }
+    
     public func infer(message: String) async throws -> String {
         let output = await session.infer(message: message)
-        guard let output = await callTool(output) else {
-            return output
-        }
-        return output
+        return try await checkToolCalls(llmInput: output)
     }
 
     public func inferenceStream(message: String) async -> AsyncStream<String> {
@@ -272,7 +349,7 @@ public actor LlamaToolSession {
         
         let streamProcessor = StreamProcessor()
         return AsyncStream { continuation in
-            observationToken = underlyingSession.observe(\.lastOutput, options: [.new, .old]) { session, change in
+            observationToken = underlyingSession.observe(\.lastOutput, options: [.new, .old]) { [self] session, change in
                 Task {
                     guard let newValue = change.newValue,
                           let oldValue = change.oldValue else {
@@ -284,15 +361,21 @@ public actor LlamaToolSession {
                         switch change {
                         case .remove(_, _, _):
                             if await streamProcessor.isProcessingToolCall {
-                                let call = try await JSONDecoder().decode(ToolCall.self, from: streamProcessor.totalBuffer.data(using: .utf8)!)
+                                var responses: [String] = []
+                                for match in await streamProcessor.totalBuffer.matches(of: toolCallRegex) {
+                                    let extractedText = String(match.output.1) // The first capture group
+                                    print("Extracted Text: \(extractedText)")
+                                    let call = try await jsonDecoder.decode(ToolCall.self, from: extractedText.data(using: .utf8)!)
+                                    responses.append(try await callToolV2(call))
+                                }
                                 await streamProcessor.setBuffer("")
                                 await streamProcessor.setTotalBuffer("")
-                                let response = try await self.callTool(call)
-                                return await self.session.session.queue.addInputLine("""
-                                <tool_response>
-                                {"id": \(call.id), result: \(response)}
-                                </tool_response>
-                                """)
+                                if !responses.isEmpty {
+                                    await self.session.session
+                                        .queue.addInputLine(responses.joined(separator: "\n"))
+                                } else {
+                                    continuation.finish()
+                                }
                             } else {
                                 continuation.finish()
                             }
@@ -302,13 +385,16 @@ public actor LlamaToolSession {
                         }
                     }
                     await streamProcessor.appendBuffer(delta)
+                    print(delta)
                     // Check if buffer contains a complete tool call
-                    if await streamProcessor.totalBuffer.starts(with: "\n\n\n{") {
+                    if await streamProcessor.totalBuffer.starts(with: "\n\n<") {
                         await streamProcessor.setIsProcessingToolCall(true)
                     } else {
                         await streamProcessor.setIsProcessingToolCall(false)
                         // If not a tool call, yield the delta
-                        continuation.yield(delta)
+                        if delta != "<|eot_id|>" {
+                            continuation.yield(delta)
+                        }
                         await streamProcessor.setBuffer("")
                     }
                     // Else, continue buffering until we have a complete tool call

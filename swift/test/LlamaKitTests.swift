@@ -14,6 +14,11 @@ import OSLog
     @Tool public func getFavoriteAnimal() async throws -> String {
         return "cat"
     }
+    
+    /// Get the color of the sky.
+    @Tool public func getSkyColor() async throws -> String {
+        return "blue"
+    }
 }
 
 // MARK: LlamaGrammarSession Suite
@@ -60,7 +65,8 @@ struct LlamaSessionSuite {
         params.cpuParams.nThreads = 8
         params.cpuParamsBatch.nThreads = 8
         params.nBatch = 1024
-        params.nGpuLayers = 100
+        params.nGpuLayers = 99
+        params.logging = true
         params.chatTemplate = """
         <|system|>
         {system_message}</s>
@@ -132,12 +138,9 @@ struct LlamaSessionSuite {
     // MARK: Tool Test
     @Test func llamaToolSession() async throws {
         let params = try await baseParams(url: "https://huggingface.co/bartowski/Llama-3-Groq-8B-Tool-Use-GGUF/resolve/main/Llama-3-Groq-8B-Tool-Use-Q8_0.gguf?download=true", to: "llama_tools.gguf")
-//        let fm = FileManager.default
-//        let tmpDir = fm.temporaryDirectory
-//        let cacheURL = tmpDir.appending(path: "cache")
-//        params.pathPromptCache = cacheURL.path()
-//        params.logging = true
-//        defer { try? fm.removeItem(at: cacheURL) }
+        params.prompt = """
+        Try calling multiple tools at the same time.
+        """
         let llama = try await MyLlama(params: params)
         var output = try await llama.infer("What's my favorite animal?")
         #expect(output.contains("cat"))
@@ -146,49 +149,29 @@ struct LlamaSessionSuite {
     }
 
     // MARK: Tool Test
-    @Test func llamaToolSessionVerbosePrompt() async throws {
+    @Test func llamaToolSessionPersistence() async throws {
         let params = try await baseParams(url: "https://huggingface.co/bartowski/Llama-3-Groq-8B-Tool-Use-GGUF/resolve/main/Llama-3-Groq-8B-Tool-Use-Q8_0.gguf?download=true", to: "llama_tools.gguf")
-        params.nCtx = 1024
-        params.nPredict = 512
-        params.nBatch = 512
-//        let fm = FileManager.default
-//        let tmpDir = fm.temporaryDirectory
-//        let cacheURL = tmpDir.appending(path: "cache")
-//        params.pathPromptCache = cacheURL.path()
         params.logging = true
-//        defer { try? fm.removeItem(at: cacheURL) }
-        let llama = try await MyLlama(params: params)
-        let output = try await llama.infer(
-        """
-        SUM UP THESE PARAGRAPH BLOCKS FOR ME:
-
-        This is a regular paragraph block. Professionally productize highly efficient results with world-class core competencies. Objectively matrix leveraged architectures vis-a-vis error-free applications. Completely maximize customized portals via fully researched metrics. Enthusiastically generate premier action items through web-enabled e-markets. Efficiently parallel task holistic intellectual capital and client-centric markets.
-
-        This is a center aligned paragraph block. Professionally productize highly efficient results with world-class core competencies. Objectively matrix leveraged architectures vis-a-vis error-free applications. Completely maximize customized portals via fully researched metrics. Enthusiastically generate premier action items through web-enabled e-markets. Efficiently parallel task holistic intellectual capital and client-centric markets.
-
-        This is a right aligned paragraph block. Professionally productize highly efficient results with world-class core competencies. Objectively matrix leveraged architectures vis-a-vis error-free applications. Completely maximize customized portals via fully researched metrics. Enthusiastically generate premier action items through web-enabled e-markets. Efficiently parallel task holistic intellectual capital and client-centric markets.
-
-        This is a paragraph block with a drop cap. Professionally productize highly efficient results with world-class core competencies. Objectively matrix leveraged architectures vis-a-vis error-free applications. Completely maximize customized portals via fully researched metrics. Enthusiastically generate premier action items through web-enabled e-markets. Efficiently parallel task holistic intellectual capital and client-centric markets.
-
-        This is a small paragraph block. Professionally productize highly efficient results with world-class core competencies. Objectively matrix leveraged architectures vis-a-vis error-free applications. Completely maximize customized portals via fully researched metrics. Enthusiastically generate premier action items through web-enabled e-markets. Efficiently parallel task holistic intellectual capital and client-centric markets.
-
-        This is a medium paragraph block. Professionally productize highly efficient results with world-class core competencies. Objectively matrix leveraged architectures vis-a-vis error-free applications. Completely maximize customized portals via fully researched metrics. Enthusiastically generate premier action items through web-enabled e-markets. Efficiently parallel task holistic intellectual capital and client-centric markets.
+        let fm = FileManager.default
+        let tmpDir = fm.temporaryDirectory
+        params.promptFile = tmpDir.appending(path: "prompt.txt").path()
+        defer {
+            try? fm.removeItem(atPath: params.promptFile!)
+        }
+        try await Task {
+            let llama = try await MyLlama(params: params)
+            let output = try await llama.infer("What color is the sky?")
+            #expect(output.contains("blue"))
+        }.value
         
-        This is a regular paragraph block. Professionally productize highly efficient results with world-class core competencies. Objectively matrix leveraged architectures vis-a-vis error-free applications. Completely maximize customized portals via fully researched metrics. Enthusiastically generate premier action items through web-enabled e-markets. Efficiently parallel task holistic intellectual capital and client-centric markets.
-
-        This is a center aligned paragraph block. Professionally productize highly efficient results with world-class core competencies. Objectively matrix leveraged architectures vis-a-vis error-free applications. Completely maximize customized portals via fully researched metrics. Enthusiastically generate premier action items through web-enabled e-markets. Efficiently parallel task holistic intellectual capital and client-centric markets.
-
-        This is a right aligned paragraph block. Professionally productize highly efficient results with world-class core competencies. Objectively matrix leveraged architectures vis-a-vis error-free applications. Completely maximize customized portals via fully researched metrics. Enthusiastically generate premier action items through web-enabled e-markets. Efficiently parallel task holistic intellectual capital and client-centric markets.
-
-        This is a paragraph block with a drop cap. Professionally productize highly efficient results with world-class core competencies. Objectively matrix leveraged architectures vis-a-vis error-free applications. Completely maximize customized portals via fully researched metrics. Enthusiastically generate premier action items through web-enabled e-markets. Efficiently parallel task holistic intellectual capital and client-centric markets.
-
-        This is a small paragraph block. Professionally productize highly efficient results with world-class core competencies. Objectively matrix leveraged architectures vis-a-vis error-free applications. Completely maximize customized portals via fully researched metrics. Enthusiastically generate premier action items through web-enabled e-markets. Efficiently parallel task holistic intellectual capital and client-centric markets.
-
-        This is a medium paragraph block. Professionally productize highly efficient results with world-class core competencies. Objectively matrix leveraged architectures vis-a-vis error-free applications. Completely maximize customized portals via fully researched metrics. Enthusiastically generate premier action items through web-enabled e-markets. Efficiently parallel task holistic intellectual capital and client-centric markets.
-        """)
-        print(output)
+        try await Task {
+            let llama = try await MyLlama(params: params)
+            let output = try await llama.infer("What was the last question I asked you?")
+            print(output)
+            #expect(output.contains("sky"))
+        }.value
     }
-    
+
     // MARK: Session dealloc Test
     // Note this test will fail if run in parallel
     @Test func llamaToolSessionDealloc() async throws {
@@ -235,7 +218,6 @@ struct LlamaSessionSuite {
     // MARK: Stream Test
     @Test func llamaToolSessionStream() async throws {
         let params = try await baseParams(url: "https://huggingface.co/bartowski/Llama-3-Groq-8B-Tool-Use-GGUF/resolve/main/Llama-3-Groq-8B-Tool-Use-Q8_0.gguf?download=true", to: "llama_tools.gguf")
-        params.prompt = "You are an AI tool assistant that can chain tool calls together."
         let llama = try await MyLlama(params: params)
         var buffer = ""
         for await output in await llama.inferenceStream(message: "What's my favorite animal and season?") {
@@ -243,5 +225,35 @@ struct LlamaSessionSuite {
             print(output, terminator: "")
         }
         #expect(buffer.contains("cat") && buffer.contains("autumn"))
+    }
+    
+    private func cosineSimilarity(vectorA: [Float], vectorB: [Float]) -> Float {
+        // Ensure vectors are the same length
+        guard vectorA.count == vectorB.count else {
+            return 0.0
+        }
+
+        // Compute dot product and magnitudes
+        let dotProduct = zip(vectorA, vectorB).map(*).reduce(0, +)
+        let magnitudeA = sqrt(vectorA.map { $0 * $0 }.reduce(0, +))
+        let magnitudeB = sqrt(vectorB.map { $0 * $0 }.reduce(0, +))
+
+        // Avoid division by zero
+        guard magnitudeA != 0 && magnitudeB != 0 else {
+            return 0.0
+        }
+
+        return dotProduct / (magnitudeA * magnitudeB)
+    }
+    
+    @Test func llamaEmbeddingsSession() async throws {
+        let params = try await baseParams(url: "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.f32.gguf?download=true", to: "embeddings_fp32.gguf")
+        params.nCtx = 2048
+        params.nBatch = 2048
+        params.embdNormalize = 1
+        let session = LlamaEmbeddingSession(parameters: params)
+        let embeddings = await session.embeddings(for: "sushi", isQuery: true)
+        let embeddings2 = await session.embeddings(for: "Advancements in quantum computing technologies", isQuery: false)
+        print(cosineSimilarity(vectorA: embeddings, vectorB: embeddings2))
     }
 }

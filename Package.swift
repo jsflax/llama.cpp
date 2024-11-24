@@ -23,6 +23,7 @@ var sources = [
     "ggml/src/ggml-quants.c",
     "common/sampling.cpp",
     "common/common.cpp",
+    "common/arg.cpp",
     "common/json-schema-to-grammar.cpp",
     "common/log.cpp",
     "common/console.cpp"
@@ -68,10 +69,10 @@ let package = Package(
     ],
     products: [
         .library(name: "llama", targets: ["llama"]),
+        .library(name: "LlamaKit", targets: ["LlamaKit"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-syntax.git", branch: "main"),
-//        .package(url: "https://github.com/TheCoderMerlin/Curses.git", from: "1.0.0"),
     ],
     targets: [
         .target(
@@ -146,15 +147,9 @@ let package = Package(
                     linkerSettings: [
                         .linkedFramework("XCTest"),
                         .linkedFramework("Testing")]),
-        .systemLibrary(name: "ncurses", path: "swift/ncurses"),
         .executableTarget(name: "LlamaKitMain",
-                          dependencies: ["LlamaKit",
-                                         "ncurses"
-                                        ],
-                          path: "swift/main",
-                          linkerSettings: [
-                            .linkedLibrary("ncurses")
-                          ]),
+                          dependencies: ["LlamaKit"],
+                          path: "swift/main"),
     ],
     cxxLanguageStandard: .cxx17
 )

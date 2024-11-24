@@ -51,7 +51,7 @@ final class GPTParamsTests: XCTestCase {
         originalParams.numaStrategy = 1
         originalParams.splitMode = 2
         originalParams.ropeScalingType = 3
-        originalParams.poolingType = 4
+        originalParams.poolingType = .cls
         originalParams.attentionType = 5
         
         // Assign sampler parameters
@@ -206,7 +206,7 @@ final class GPTParamsTests: XCTestCase {
         XCTAssertEqual(originalParams.numaStrategy, 1)
         XCTAssertEqual(originalParams.splitMode, 2)
         XCTAssertEqual(originalParams.ropeScalingType, 3)
-        XCTAssertEqual(originalParams.poolingType, 4)
+        XCTAssertEqual(originalParams.poolingType, .cls)
         XCTAssertEqual(originalParams.attentionType, 5)
         
         // Verify string properties

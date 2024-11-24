@@ -5,6 +5,7 @@
 @class LlamaContextParams;
 @class GGMLThreadpool;
 @class CPUParams;
+typedef NS_ENUM(NSInteger, LlamaPoolingType);
 
 @interface GPTSamplerParams : NSObject
 
@@ -38,6 +39,8 @@
 - (NSString *)print;
 
 @end
+
+NS_ASSUME_NONNULL_BEGIN
 
 @interface GPTParams : NSObject
 
@@ -73,13 +76,13 @@
 @property (nonatomic, strong) CPUParams *draftCpuParamsBatch;
 
 @property (nonatomic, copy) void (^cbEval)(void *);
-@property (nonatomic, assign) void *cbEvalUserData;
+@property (nonatomic, assign, nullable) void *cbEvalUserData;
 
 @property (nonatomic, assign) NSInteger numaStrategy; // Enumerations
 
 @property (nonatomic, assign) NSInteger splitMode;
 @property (nonatomic, assign) NSInteger ropeScalingType;
-@property (nonatomic, assign) NSInteger poolingType;
+@property (nonatomic, assign) LlamaPoolingType poolingType;
 @property (nonatomic, assign) NSInteger attentionType;
 
 // Sampler parameters would also be converted to an Objective-C object
@@ -93,7 +96,7 @@
 @property (nonatomic, copy) NSString *hfRepo;
 @property (nonatomic, copy) NSString *hfFile;
 @property (nonatomic, copy) NSString *prompt;
-@property (nonatomic, copy) NSString *promptFile;
+@property (nonatomic, copy, nullable) NSString *promptFile;
 @property (nonatomic, copy) NSString *pathPromptCache;
 @property (nonatomic, copy) NSString *inputPrefix;
 @property (nonatomic, copy) NSString *inputSuffix;
@@ -210,7 +213,13 @@
 @property (nonatomic, assign) BOOL displayPrompt; // print prompt before generation
 
 @property (nonatomic, assign) BOOL logging; // print logging
+@property (nonatomic, assign) int32_t embdNormalize;
+
+/// Completion block for the user to modify a prompt in the event that it exceeds the context.
+@property (nonatomic, copy) NSString *(^onPromptTooLong)(NSString * prompt, int32_t nKeep);
 
 @end
+
+NS_ASSUME_NONNULL_END
 
 #endif /* GPTParams_h */

@@ -1,6 +1,8 @@
 #ifndef LlamaBatch_h
 #define LlamaBatch_h
 
+NS_ASSUME_NONNULL_BEGIN
+
 typedef NSInteger LlamaSequenceId;
 typedef NSInteger LlamaPosition;
 typedef int32_t LlamaToken;
@@ -16,6 +18,8 @@ typedef int32_t LlamaToken;
 /// - logits : if zero, the logits (and/or the embeddings) for the respective token will not be output
 @interface LlamaBatch : NSObject
 
+- (nonnull instancetype)init:(int32_t)nTokens embd:(int32_t)embd nSeqMax:(int32_t)nSeqMax;
+
 @property (nonatomic, assign) NSInteger nTokens;
 @property (nonatomic, assign) LlamaToken *tokens;
 @property (nonatomic, assign) float *embd;
@@ -29,6 +33,13 @@ typedef int32_t LlamaToken;
 @property (nonatomic, assign) LlamaPosition allPos1;
 @property (nonatomic, assign) LlamaSequenceId allSeqId;
 
+- (void)addSequence:(NSArray<NSNumber *> *)tokens
+         sequenceId:(LlamaSequenceId)sequenceId;
+
+- (void)clear;
+
 @end
+
+NS_ASSUME_NONNULL_END
 
 #endif /* LlamaBatch_h */

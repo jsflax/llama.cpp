@@ -45,7 +45,7 @@ struct LlamaActorMacro: ExtensionMacro, MemberMacro {
         ] = []
         let typeName = type.as(IdentifierTypeSyntax.self)!.name.text
         for member in declaration.memberBlock.members {
-            let comments = member.leadingTrivia.filter { $0.isComment }
+            var comments = member.leadingTrivia.filter { $0.isComment }
             guard let member = member.decl.as(FunctionDeclSyntax.self) else {
                 continue
             }
@@ -56,8 +56,17 @@ struct LlamaActorMacro: ExtensionMacro, MemberMacro {
             }
 
             let name = member.name
+            // TODO: This should be better. It's basically dropping any non docstring comments
+            // TODO: before the docstring comments.
+            comments = Array(comments.drop(while: {
+                if case let .docLineComment(_) = $0 {
+                    return false
+                } else {
+                    return true
+                }
+            }))
             guard case var .docLineComment(description) = comments.first else {
-                throw LlamaKitMacroError.message("Missing comment")
+                throw LlamaKitMacroError.message("Missing comment for tool \(name.text).")
             }
             description = String(description.dropFirst(3))
             var parameters: [(name: String, type: String, description: String)] = []

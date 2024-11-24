@@ -6,7 +6,7 @@
 @interface LlamaBatch()
 
 - (instancetype)initWithBatch:(llama_batch)batch;
-- (llama_batch)cBatch;
+- (llama_batch &)cBatch;
 
 @end
 

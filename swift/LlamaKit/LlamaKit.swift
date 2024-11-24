@@ -36,6 +36,9 @@ public actor LlamaChatSession {
         _ = session.queue.outputLine()
     }
     
+    public func __getOutput() -> String {
+        return session.queue.outputLine()
+    }
     /// Creates an asynchronous stream for inference results based on a given message.
     ///
     /// This method sends a message to the LLM and returns an `AsyncStream` that yields
@@ -133,5 +136,10 @@ public actor LlamaSession<T: JSONSchemaConvertible> {
     public func infer(message: String) async throws -> T {
         let output = await session.infer(message: message).data(using: .utf8)!
         return try JSONDecoder().decode(T.self, from: output)
+    }
+    
+    
+    public func __getOutput() throws -> T {
+        return try JSONDecoder().decode(T.self, from: session.session.queue.outputLine().data(using: .utf8)!)
     }
 }

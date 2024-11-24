@@ -17602,6 +17602,7 @@ static int llama_decode_internal(
 
             const auto slot = llama_kv_cache_find_slot(kv_self, ubatch);
             if (!slot) {
+                LLAMA_LOG_ERROR("could not find slot!");
                 return 1;
             }
             kv_slot_restorer.save(slot);

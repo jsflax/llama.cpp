@@ -11,9 +11,9 @@
 - (instancetype)initWithContext:(llama_context *)context model:(llama_model *)model
                                 commonParams:(GPTParams *)params;
 
-- (std::vector<llama_token>)tokenize:(NSString *)text
-                          addSpecial:(BOOL)addSpecial
-                        parseSpecial:(BOOL)parseSpecial;
+- (std::vector<llama_token>)cppTokenize:(NSString *)text
+                             addSpecial:(BOOL)addSpecial
+                           parseSpecial:(BOOL)parseSpecial;
 
 - (BOOL)loadStateFile:(NSString *)pathSession
             tokensOut:(llama_token *)tokensOut

@@ -290,6 +290,14 @@
     common_params gpt_params;
 }
 
+- (NSInteger)numaStrategy {
+    return gpt_params.numa;
+}
+
+- (void)setNumaStrategy:(NSInteger)numaStrategy {
+    gpt_params.numa = ggml_numa_strategy(numaStrategy);
+}
+
 - (NSArray<NSString *> *)antiPrompts {
     auto antiprompts = [[NSMutableArray alloc] init];
     for (auto& antiprompt : gpt_params.antiprompt) {
@@ -385,11 +393,21 @@
 - (void)setNDraft:(int32_t)nDraft {
     gpt_params.n_draft = nDraft;
 }
-
+- (BOOL)special {
+    return gpt_params.special;
+}
+- (void)setSpecial:(BOOL)special {
+    gpt_params.special = special;
+}
+- (int32_t)nPrint {
+    return gpt_params.n_print;
+}
+- (void)setNPrint:(int32_t)nPrint {
+    gpt_params.n_print = nPrint;
+}
 - (int32_t)nChunks {
     return gpt_params.n_chunks;
 }
-
 - (void)setNChunks:(int32_t)nChunks {
     gpt_params.n_chunks = nChunks;
 }
@@ -464,14 +482,6 @@
 
 - (void)setGrpAttnW:(int32_t)grpAttnW {
     gpt_params.grp_attn_w = grpAttnW;
-}
-
-- (int32_t)nPrint {
-    return gpt_params.n_print;
-}
-
-- (void)setNPrint:(int32_t)nPrint {
-    gpt_params.n_print = nPrint;
 }
 
 - (float)ropeFreqBase {
@@ -601,8 +611,13 @@
 }
 
 - (NSString *)promptFile {
-    return [NSString stringWithCString:gpt_params.prompt_file.c_str() encoding:NSUTF8StringEncoding];
+    if (gpt_params.prompt_file.empty()) {
+        return nil;
+    } else {
+        return [NSString stringWithCString:gpt_params.prompt_file.c_str() encoding:NSUTF8StringEncoding];
+    }
 }
+
 - (void)setPromptFile:(NSString *)promptFile {
     gpt_params.prompt_file = [promptFile cStringUsingEncoding:NSUTF8StringEncoding];
 }
@@ -674,11 +689,26 @@
     return gpt_params.ctx_shift;
 }
 
+- (LlamaPoolingType)poolingType {
+    return LlamaPoolingType(gpt_params.pooling_type);
+}
+- (void)setPoolingType:(LlamaPoolingType)poolingType {
+    gpt_params.pooling_type = static_cast<enum llama_pooling_type>(poolingType);
+}
+- (int32_t)embdNormalize {
+    return gpt_params.embd_normalize;
+}
+
+- (void)setEmbdNormalize:(int32_t)embdNormalize {
+    gpt_params.embd_normalize = embdNormalize;
+}
+
 - (id)copyWithZone:(NSZone *)zone {
     GPTParams *copy = [[[self class] allocWithZone:zone] init];
     
     if (copy) {
         copy->gpt_params = gpt_params;
+        copy.onPromptTooLong = [self onPromptTooLong];
     }
     
     return copy;

@@ -56,9 +56,9 @@ params.nCtx = 4096 * 4
 params.cpuParams.nThreads = 8
 params.cpuParamsBatch.nThreads = 8
 params.nBatch = 4096
-params.nGpuLayers = 30
-params.logging = false
-
+params.nGpuLayers = 50
+params.logging = true
+params.nPrint = 100
 _ = try await Task {
     let llama = try await MyLlama(params: params)
     

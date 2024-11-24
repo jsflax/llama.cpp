@@ -40,6 +40,9 @@
     return llama_token_bos(model);
 }
 
+- (int)nEmbd {
+    return llama_n_embd(model);
+}
 - (int32_t)nCtxTrain {
     return llama_n_ctx_train(model);
 }
@@ -52,7 +55,9 @@
 - (BOOL)hasEncoder {
     return llama_model_has_encoder(model);
 }
-
+- (BOOL)hasDecoder {
+    return llama_model_has_decoder(model);
+}
 - (llama_model *)cModel {
     return model;
 }
