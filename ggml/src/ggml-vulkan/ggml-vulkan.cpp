@@ -6738,8 +6738,9 @@ static const struct ggml_backend_reg_i ggml_backend_vk_reg_i = {
 
 ggml_backend_reg_t ggml_backend_vk_reg() {
     static ggml_backend_reg reg = {
-        /* .iface   = */ ggml_backend_vk_reg_i,
-        /* .context = */ nullptr,
+        /* .api_version = */ GGML_BACKEND_API_VERSION,
+        /* .iface       = */ ggml_backend_vk_reg_i,
+        /* .context     = */ nullptr,
     };
 
     return &reg;
@@ -7156,7 +7157,7 @@ static void ggml_vk_check_results_0(ggml_tensor * tensor) {
         const int32_t max_period = tensor->op_params[1];
         tensor_clone = ggml_timestep_embedding(ggml_ctx, src0_clone, dim, max_period);
     } else if (tensor->op == GGML_OP_POOL_2D) {
-        enum ggml_op_pool op = static_cast<ggml_op_pool>(dst->op_params[0]);
+        enum ggml_op_pool op = static_cast<ggml_op_pool>(tensor->op_params[0]);
         const int32_t k0 = tensor->op_params[1];
         const int32_t k1 = tensor->op_params[2];
         const int32_t s0 = tensor->op_params[3];
@@ -7365,3 +7366,5 @@ static void ggml_vk_check_results_1(ggml_tensor * tensor) {
     VK_LOG_DEBUG("END ggml_vk_check_results_1(" << tensor->name << ")");
 }
 #endif
+
+GGML_BACKEND_DL_IMPL(ggml_backend_vk_reg)
