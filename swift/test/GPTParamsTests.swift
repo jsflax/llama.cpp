@@ -14,13 +14,10 @@ final class GPTParamsTests: XCTestCase {
         originalParams.nBatch = 30
         originalParams.nUBatch = 40
         originalParams.nKeep = 50
-        originalParams.nDraft = 60
         originalParams.nChunks = 70
         originalParams.nParallel = 80
         originalParams.nSequences = 90
-        originalParams.pSplit = 0.5
         originalParams.nGpuLayers = 100
-        originalParams.nGpuLayersDraft = 110
         originalParams.mainGpu = 120
         originalParams.tensorSplit = [0.1, 0.2, 0.3]
         originalParams.grpAttnN = 130
@@ -180,13 +177,10 @@ final class GPTParamsTests: XCTestCase {
         XCTAssertEqual(originalParams.nBatch, 30)
         XCTAssertEqual(originalParams.nUBatch, 40)
         XCTAssertEqual(originalParams.nKeep, 50)
-        XCTAssertEqual(originalParams.nDraft, 60)
         XCTAssertEqual(originalParams.nChunks, 70)
         XCTAssertEqual(originalParams.nParallel, 80)
         XCTAssertEqual(originalParams.nSequences, 90)
-        XCTAssertEqual(originalParams.pSplit, 0.5)
         XCTAssertEqual(originalParams.nGpuLayers, 100)
-        XCTAssertEqual(originalParams.nGpuLayersDraft, 110)
         XCTAssertEqual(originalParams.mainGpu, 120)
         XCTAssertEqual(originalParams.tensorSplit[0..<3].map(\.floatValue),
                        [0.1, 0.2, 0.3])
@@ -338,13 +332,10 @@ final class GPTParamsTests: XCTestCase {
         XCTAssertEqual(copiedParams.nBatch, originalParams.nBatch)
         XCTAssertEqual(copiedParams.nUBatch, originalParams.nUBatch)
         XCTAssertEqual(copiedParams.nKeep, originalParams.nKeep)
-        XCTAssertEqual(copiedParams.nDraft, originalParams.nDraft)
         XCTAssertEqual(copiedParams.nChunks, originalParams.nChunks)
         XCTAssertEqual(copiedParams.nParallel, originalParams.nParallel)
         XCTAssertEqual(copiedParams.nSequences, originalParams.nSequences)
-        XCTAssertEqual(copiedParams.pSplit, originalParams.pSplit)
         XCTAssertEqual(copiedParams.nGpuLayers, originalParams.nGpuLayers)
-        XCTAssertEqual(copiedParams.nGpuLayersDraft, originalParams.nGpuLayersDraft)
         XCTAssertEqual(copiedParams.mainGpu, originalParams.mainGpu)
         XCTAssertEqual(copiedParams.tensorSplit, originalParams.tensorSplit)
         XCTAssertEqual(copiedParams.grpAttnN, originalParams.grpAttnN)

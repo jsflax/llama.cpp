@@ -14,7 +14,7 @@
 
 @interface GPTSamplerParams()
 
-- (common_sampler_params&)cParams;
+- (common_params_sampling&)cParams;
 
 @end
 #endif /* GPTParams_Private_hpp */

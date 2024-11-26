@@ -6,10 +6,10 @@
 #import "ggml.h"
 
 @implementation GPTSamplerParams {
-    common_sampler_params *gpt_sampler_params;
+    common_params_sampling *gpt_sampler_params;
 }
 
-- (instancetype)initWithParams:(common_sampler_params&)params {
+- (instancetype)initWithParams:(common_params_sampling&)params {
     self = [super init];
     if (self) {
         gpt_sampler_params = &params;
@@ -280,7 +280,7 @@
     return [output copy];
 }
 
-- (common_sampler_params&)cParams {
+- (common_params_sampling&)cParams {
     return *gpt_sampler_params;
 }
 
@@ -385,14 +385,6 @@
 - (void)setNKeep:(int32_t)nKeep {
     gpt_params.n_keep = nKeep;
 }
-
-- (int32_t)nDraft {
-    return gpt_params.n_draft;
-}
-
-- (void)setNDraft:(int32_t)nDraft {
-    gpt_params.n_draft = nDraft;
-}
 - (BOOL)special {
     return gpt_params.special;
 }
@@ -435,29 +427,12 @@
 - (void)setNSequences:(int32_t)nSequences {
     gpt_params.n_sequences = nSequences;
 }
-
-- (float)pSplit {
-    return gpt_params.p_split;
-}
-
-- (void)setPSplit:(float)pSplit {
-    gpt_params.p_split = pSplit;
-}
-
 - (int32_t)nGpuLayers {
     return gpt_params.n_gpu_layers;
 }
 
 - (void)setNGpuLayers:(int32_t)nGpuLayers {
     gpt_params.n_gpu_layers = nGpuLayers;
-}
-
-- (int32_t)nGpuLayersDraft {
-    return gpt_params.n_gpu_layers_draft;
-}
-
-- (void)setNGpuLayersDraft:(int32_t)nGpuLayersDraft {
-    gpt_params.n_gpu_layers_draft = nGpuLayersDraft;
 }
 
 - (int32_t)mainGpu {
@@ -591,7 +566,7 @@
 }
 
 - (GPTSamplerParams *)samplerParams {
-    return [[GPTSamplerParams alloc] initWithParams:gpt_params.sparams];
+    return [[GPTSamplerParams alloc] initWithParams:gpt_params.sampling];
 }
 
 - (NSString *)modelURL {

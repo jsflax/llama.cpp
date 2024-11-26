@@ -49,13 +49,10 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, assign) int32_t nBatch;
 @property (nonatomic, assign) int32_t nUBatch;
 @property (nonatomic, assign) int32_t nKeep;
-@property (nonatomic, assign) int32_t nDraft;
 @property (nonatomic, assign) int32_t nChunks;
 @property (nonatomic, assign) int32_t nParallel;
 @property (nonatomic, assign) int32_t nSequences;
-@property (nonatomic, assign) float pSplit;
 @property (nonatomic, assign) int32_t nGpuLayers;
-@property (nonatomic, assign) int32_t nGpuLayersDraft;
 @property (nonatomic, assign) int32_t mainGpu;
 @property (nonatomic, strong) NSArray<NSNumber *> *tensorSplit;
 @property (nonatomic, assign) int32_t grpAttnN;
