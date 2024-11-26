@@ -1,88 +1,10 @@
 import Foundation
 import RegexBuilder
 
-
-public protocol DynamicCallable: Sendable {
-    @discardableResult
-    func dynamicallyCall(withKeywordArguments args: [String: Any]) async throws -> String
-}
-
-public enum AnyDecodable: Decodable {
-    case string(String)
-    case int(Int)
-    case double(Double)
-    case bool(Bool)
-    case uuid(UUID)
-    case date(Date)
-    
-    case null
-    // Add other cases as needed
-
-    // Initializers for each type
-    init(_ value: String) {
-        self = .string(value)
-    }
-
-    init(_ value: Int) {
-        self = .int(value)
-    }
-
-    init(_ value: Double) {
-        self = .double(value)
-    }
-
-    init(_ value: Bool) {
-        self = .bool(value)
-    }
-    
-    init(_ value: UUID) {
-        self = .uuid(value)
-    }
-    init(_ value: Date) {
-        self = .date(value)
-    }
-    init() {
-        self = .null
-    }
-
-    // Decodable conformance
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.singleValueContainer()
-        
-        if container.decodeNil() {
-            self = .null
-        } else if let intValue = try? container.decode(Int.self) {
-            self = .int(intValue)
-        } else if let doubleValue = try? container.decode(Double.self) {
-            self = .double(doubleValue)
-        } else if let boolValue = try? container.decode(Bool.self) {
-            self = .bool(boolValue)
-        } else if let uuidValue = try? container.decode(UUID.self) {
-            self = .uuid(uuidValue)
-        }  else if let dateValue = try? container.decode(Date.self) {
-            self = .date(dateValue)
-        } else if let stringValue = try? container.decode(String.self) {
-            let formatter = DateFormatter()
-            formatter.dateFormat = "yyyy-MM-dd"
-            if let date = formatter.date(from: stringValue) {
-                self = .date(date)
-            } else {
-                self = .string(stringValue)
-            }
-        } else {
-            let context = DecodingError.Context(
-                codingPath: decoder.codingPath,
-                debugDescription: "Cannot decode AnyDecodable"
-            )
-            throw DecodingError.typeMismatch(AnyDecodable.self, context)
-        }
-    }
-}
-
-struct ToolCall: Decodable {
+struct ToolCall {
     let id: Int
     let name: String
-    let arguments: [String: AnyDecodable]
+    let arguments: [String: Any]
 }
 
 struct ToolResponse<T: Encodable>: Encodable {
@@ -204,15 +126,9 @@ public actor LlamaToolSession {
         </tool_call>
 
         <tools> \(String(data: encoded, encoding: .utf8)!) </tools>
-        <|eot_id|><|start_header_id|>assistant<|end_header_id|>
-        <tool_call>
-        {"id": 0, "name": "getCurrentDate","arguments": {}}
-        </tool_call>
-        <|eot_id|><|start_header_id|>user<|end_header_id|>
-        <tool_response>
-        {"id": 0, "response": "\(Date.now.formatted(date: .long, time: .complete))"}
-        </tool_response>
+
         \(params.prompt)
+        
         <|eot_id|><|start_header_id|>assistant<|end_header_id|>
         """
         params.prompt = prompt
@@ -221,7 +137,7 @@ public actor LlamaToolSession {
         params.antiPrompts.append("<|eot_id|>")
         params.inputPrefix = "<|start_header_id|>user<|end_header_id|>"
         params.inputSuffix = "<|eot_id|><|start_header_id|>assistant<|end_header_id|>"
-        params.nKeep = Int32(prompt.count + params.inputSuffix.count)
+        params.nKeep = Int32(LlamaModel(fromFile: params.modelPath).tokenize(params.prompt, addSpecial: true, parseSpecial: true).count)
         params.special = true
         let hasExistingPromptFile = params.promptFile.map {
             (try? FileManager.default.attributesOfItem(atPath: $0)) ?? [:]
@@ -243,64 +159,27 @@ public actor LlamaToolSession {
         print(try await checkToolCalls(llmInput: line))
     }
     
-    private func callToolV2(_ call: ToolCall) async throws -> String {
-        guard let tool = tools[call.name] else {
-            fatalError()
-        }
-        let callable = tool.0
-        
-        let response = try await callable.dynamicallyCall(withKeywordArguments: call.arguments)
-        return """
-        <tool_response>
-        {"id": \(call.id), result: \(response)}
-        </tool_response>
-        """
-    }
-    
     private func callTool(_ call: ToolCall) async throws -> String {
         guard let tool = tools[call.name] else {
             fatalError()
         }
-        // TODO: tool call decode is allowed to fail but the code below is not
-        let callable = tool.0
-    
-        return try await callable.dynamicallyCall(withKeywordArguments: call.arguments)
-    }
-
-    // MARK: Call Tool
-    private func callTool(_ call: String) async -> String? {
-        var nxt: String?
-        do {
-            let toolCall = try jsonDecoder.decode(ToolCall.self, from: call.data(using: .utf8)!)
-            guard let tool = tools[toolCall.name] else {
-                fatalError()
-            }
-            // TODO: tool call decode is allowed to fail but the code below is not
-            let callable = tool.0
         
-            do {
-                let response = try await callable.dynamicallyCall(withKeywordArguments: toolCall.arguments)
-                print("tool response: \(response)")
-                nxt = await session.infer(message: """
-                <tool_response>
-                {"id": \(toolCall.id), result: \(response)}
-                </tool_response>
-                """)
-                // TODO: If this decodes correctly, we should tail this into this method
-                // TODO: so that we do not decode twice
-                if let _ = try? jsonDecoder.decode(ToolCall.self, from: nxt!.data(using: .utf8)!) {
-                    return await callTool(nxt!)
-                }
-            } catch {
-                nxt = await session.infer(message: """
-                <tool_response>
-                {"id": \(toolCall.id), result: "The tool call has unfortunately failed."}
-                </tool_response>
-                """)
-            }
-            print(nxt ?? "nil")
-        } catch {}
-        return nxt
+        let callable = tool.0
+        
+        do {
+            let response = try await callable.dynamicallyCall(withKeywordArguments: call.arguments)
+            return """
+            <tool_response>
+            {"id": \(call.id), result: \(response)}
+            </tool_response>
+            """
+        } catch {
+            return """
+            <tool_response>
+            {"id": \(call.id), result: "ToolError: \(error.localizedDescription)"}
+            </tool_response>
+            """
+        }
     }
     
     private func checkToolCalls(llmInput: String) async throws -> String {
@@ -308,10 +187,14 @@ public actor LlamaToolSession {
         for match in llmInput.matches(of: toolCallRegex) {
             let extractedText = String(match.output.1) // The first capture group
             print("Extracted Text: \(extractedText)")
-            let call = try jsonDecoder.decode(ToolCall.self, from: extractedText.data(using: .utf8)!)
-            responses.append(try await callToolV2(call))
+            let object = try JSONSerialization.jsonObject(with: extractedText.data(using: .utf8)!) as! [String: Any]
+            let call = ToolCall(id: object["id"] as! Int,
+                                    name: object["name"] as! String,
+                                    arguments: object["arguments"] as! [String: Any])
+            responses.append(try await callTool(call))
         }
         if !responses.isEmpty {
+            print("Tool Response: \(responses.joined(separator: "\n"))")
             return try await checkToolCalls(llmInput: await session.infer(message: responses.joined(separator: "\n")))
         } else {
             return llmInput
@@ -365,12 +248,16 @@ public actor LlamaToolSession {
                                 for match in await streamProcessor.totalBuffer.matches(of: toolCallRegex) {
                                     let extractedText = String(match.output.1) // The first capture group
                                     print("Extracted Text: \(extractedText)")
-                                    let call = try await jsonDecoder.decode(ToolCall.self, from: extractedText.data(using: .utf8)!)
-                                    responses.append(try await callToolV2(call))
+                                    let object = try JSONSerialization.jsonObject(with: extractedText.data(using: .utf8)!) as! [String: Any]
+                                    let call = ToolCall(id: object["id"] as! Int,
+                                                            name: object["name"] as! String,
+                                                            arguments: object["arguments"] as! [String: Any])
+                                    responses.append(try await callTool(call))
                                 }
                                 await streamProcessor.setBuffer("")
                                 await streamProcessor.setTotalBuffer("")
                                 if !responses.isEmpty {
+                                    print("Tool Response: \(responses.joined(separator: "\n"))")
                                     await self.session.session
                                         .queue.addInputLine(responses.joined(separator: "\n"))
                                 } else {

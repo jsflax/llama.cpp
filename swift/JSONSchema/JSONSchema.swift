@@ -4,10 +4,12 @@ public struct JSONSchema : Codable {
     public struct Items : Codable {
         let type: String
         let `enum`: [String]?
+        let properties: [String: Property]?
         
-        public init(type: String, `enum`: [String]?) {
+        public init(type: String, `enum`: [String]?, properties: [String: Property]?) {
             self.type = type
             self.enum = `enum`
+            self.properties = properties
         }
     }
     public struct Property : Codable {
@@ -34,15 +36,17 @@ public struct JSONSchema : Codable {
 
 
 public struct _JSONFunctionSchema: Codable {
-    public struct Items: Codable {
-        let type: String
-        let `enum`: [String]?
-        
-        public init(type: Any.Type, `enum`: [String]?) {
-            self.type = String(describing: type)
-            self.enum = `enum`
-        }
-    }
+    public typealias Items = JSONSchema.Items
+//    public struct Items: Codable {
+//        let type: String
+//        let `enum`: [String]?
+//        let properties: [Property]?
+//        
+//        public init(type: String, `enum`: [String]?, properties: [Property]?) {
+//            self.type = type
+//            self.enum = `enum`
+//        }
+//    }
 
     public struct Property: Codable {
         let type: String
@@ -93,6 +97,18 @@ public struct _JSONFunctionSchema: Codable {
             self.enum = nil
         }
         
+        public init<T: JSONSchemaConvertible>(type: Array<T>.Type, description: String?) {
+            self.type = "array"
+            self.description = description
+            self.items = Array<T>.items
+            self.enum = nil
+        }
+        public init<T: JSONSchemaConvertible>(type: T.Type, description: String?) {
+            self.type = "object"
+            self.description = description
+            self.items = T.items
+            self.enum = nil
+        }
         public init<T: CaseIterable>(type: T.Type, description: String?) where T: RawRepresentable,
         T: StringProtocol {
             self.type = "string"
@@ -125,9 +141,28 @@ public struct _JSONFunctionSchema: Codable {
     }
 }
 
+public enum JSONDecodingError: Error, CustomStringConvertible {
+    case invalidType
+    case missingRequiredProperty(String)
+    case invalidValue
+    
+    public var description: String {
+        switch self {
+        case .invalidType:
+            "Invalid type"
+        case .missingRequiredProperty(let string):
+            "Missing required property: \(string)"
+        case .invalidValue:
+            "Invalid value"
+        }
+    }
+}
+
 public protocol JSONSchemaConvertible : Codable {
     static var type: String { get }
     static var jsonSchema: [String : Any] { get }
+    static var properties: [String: JSONSchema.Property]? { get }
+    init(from json: Any) throws
     static func decode<K: CodingKey>(from container: KeyedDecodingContainer<K>,
                                      forKey key: K) throws -> Self
 }
@@ -148,9 +183,6 @@ extension JSONSchemaConvertible {
     public static var items: JSONSchema.Items? {
         nil
     }
-    public static var properties: [JSONSchema.Property]? {
-        nil
-    }
     public static var `enum`: [String]? {
         nil
     }
@@ -159,6 +191,39 @@ extension JSONSchemaConvertible {
     }
 }
 extension String : JSONSchemaConvertible {
+    public init(from json: Any) throws {
+        guard let json = json as? String else {
+            throw JSONDecodingError.invalidType
+        }
+        self = json
+    }
+    
+    public static var properties: [String : JSONSchema.Property]? {
+        nil
+    }
+    
+    public static var type: String { "string" }
+    public static var jsonSchema: [String: Any] {
+        [
+            "type": "string"
+        ]
+    }
+}
+extension UUID : JSONSchemaConvertible {
+    public init(from json: Any) throws {
+        guard let json = json as? String else {
+            throw JSONDecodingError.invalidType
+        }
+        guard let json = UUID(uuidString: json) else {
+            throw JSONDecodingError.invalidValue
+        }
+        self = json
+    }
+    
+    public static var properties: [String : JSONSchema.Property]? {
+        nil
+    }
+    
     public static var type: String { "string" }
     public static var jsonSchema: [String: Any] {
         [
@@ -167,6 +232,16 @@ extension String : JSONSchemaConvertible {
     }
 }
 extension Int : JSONSchemaConvertible {
+    public init(from json: Any) throws {
+        guard let json = json as? Int else {
+            throw JSONDecodingError.invalidType
+        }
+        self = json
+    }
+    public static var properties: [String : JSONSchema.Property]? {
+        nil
+    }
+    
     public static var type: String { "number" }
     public static var jsonSchema: [String: Any] {
         [
@@ -175,6 +250,16 @@ extension Int : JSONSchemaConvertible {
     }
 }
 extension Double : JSONSchemaConvertible {
+    public init(from json: Any) throws {
+        guard let json = json as? Double else {
+            throw JSONDecodingError.invalidType
+        }
+        self = json
+    }
+    public static var properties: [String : JSONSchema.Property]? {
+        nil
+    }
+    
     public static var type: String { "number" }
     public static var jsonSchema: [String: Any] {
         [
@@ -183,6 +268,16 @@ extension Double : JSONSchemaConvertible {
     }
 }
 extension Bool : JSONSchemaConvertible {
+    public init(from json: Any) throws {
+        guard let json = json as? Bool else {
+            throw JSONDecodingError.invalidType
+        }
+        self = json
+    }
+    public static var properties: [String : JSONSchema.Property]? {
+        nil
+    }
+    
     public static var type: String { "boolean" }
     public static var jsonSchema: [String: Any] {
         [
@@ -191,6 +286,19 @@ extension Bool : JSONSchemaConvertible {
     }
 }
 extension Date : JSONSchemaConvertible {
+    public init(from json: Any) throws {
+        guard let json = json as? String else {
+            throw JSONDecodingError.invalidType
+        }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        
+        guard let json = formatter.date(from: json) else {
+            throw JSONDecodingError.invalidValue
+        }
+        self = json
+    }
+    public static var properties: [String : JSONSchema.Property]? { nil }
     public static var type: String { "string" }
 
     public static var jsonSchema: [String: Any] {
@@ -209,10 +317,17 @@ extension Date : JSONSchemaConvertible {
 }
 
 extension Array : JSONSchemaConvertible where Element : JSONSchemaConvertible {
+    public init(from json: Any) throws {
+        guard let json = json as? Array<Any> else {
+            throw JSONDecodingError.invalidType
+        }
+        self = try json.map(Element.init)
+    }
     public static var type: String { "array" }
     public static var items: JSONSchema.Items? {
-        JSONSchema.Items(type: Element.type, enum: Element.enum)
+        JSONSchema.Items(type: Element.type, enum: Element.enum, properties: Element.properties)
     }
+    public static var properties: [String : JSONSchema.Property]? { nil }
     public static var jsonSchema: [String : Any] {
         [
             "type": "array",

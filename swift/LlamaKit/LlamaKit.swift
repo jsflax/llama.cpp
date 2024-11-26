@@ -23,17 +23,26 @@ public actor LlamaChatSession {
     /// - parameter flush: whether or not to flush the initial prompt, reading initial output
     public init(params: GPTParams, flush: Bool = true) async throws {
         self.session = __LlamaSession(params: params)
-//        let initialOutputTask = Task.detached { [session] in
-//            return session.queue.outputLine()
-//        }
+
         Task.detached { [session] in
             session.start()
         }
         
         // flush
-//        print(try await initialOutputTask.value)
         guard flush else { return }
         _ = session.queue.outputLine()
+    }
+    
+    public static func run(params: GPTParams) async throws -> String {
+        let session = __LlamaSession(params: params)!
+        
+        let initialOutputTask = Task.detached { [session] in
+            return session.queue.outputLine()
+        }
+        Task.detached { [session] in
+            session.start()
+        }
+        return try await initialOutputTask.value!
     }
     
     public func __getOutput() -> String {

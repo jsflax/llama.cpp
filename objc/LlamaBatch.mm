@@ -7,8 +7,12 @@
     llama_batch batch;
 }
 
-- (instancetype)initWithBatch:(llama_batch)batch {
-    self->batch = batch;
+- (instancetype)initWithBatch:(llama_batch&&)batch {
+    self = [super init];
+    if (self) {
+        self->batch = std::move(batch);
+    }
+    return self;
 }
 
 - (instancetype)init:(int32_t)nTokens embd:(int32_t)embd nSeqMax:(int32_t)nSeqMax {

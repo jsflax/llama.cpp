@@ -62,7 +62,7 @@ cSettings.append(.define("_GNU_SOURCE"))
 let package = Package(
     name: "llama",
     platforms: [
-        .macOS(.v13),
+        .macOS(.v14),
         .iOS(.v16),
         .watchOS(.v4),
         .tvOS(.v14)

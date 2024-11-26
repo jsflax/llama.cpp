@@ -22,6 +22,24 @@
     return self;
 }
 
+- (NSArray<NSNumber *> *)tokenize:(NSString *)text
+                       addSpecial:(BOOL)addSpecial
+                     parseSpecial:(BOOL)parseSpecial {
+    NSMutableArray<NSNumber *> *tokens = [[NSMutableArray alloc] init];
+    for (auto& token : common_tokenize(model, [text cStringUsingEncoding:NSUTF8StringEncoding], addSpecial, parseSpecial)) {
+        [tokens addObject:[[NSNumber alloc] initWithInt:token]];
+    }
+    return tokens;
+}
+
+- (instancetype)initFromFile:(NSString *)path {
+    self = [super init];
+    if (self) {
+        model = llama_load_model_from_file([path cStringUsingEncoding:NSUTF8StringEncoding], llama_model_default_params());
+    }
+    return self;
+}
+
 - (void)dealloc
 {
     llama_free_model(model);

@@ -33,7 +33,7 @@ private func view(for member: MemberBlockItemListSyntax.Element) throws -> Membe
     return memberView
 }
 
-struct JSONSchemaMacro: ExtensionMacro, MemberMacro {
+class JSONSchemaMacro: ExtensionMacro, MemberMacro {
     static func expansion(of node: AttributeSyntax, providingMembersOf declaration: some DeclGroupSyntax, conformingTo protocols: [TypeSyntax], in context: some MacroExpansionContext) throws -> [DeclSyntax] {
         let members = try declaration.memberBlock.members.compactMap(view(for:))
         if declaration is EnumDeclSyntax {
@@ -51,6 +51,21 @@ struct JSONSchemaMacro: ExtensionMacro, MemberMacro {
                 \(raw: members.map {
                     """
                     self.\($0.name) = try \($0.type).decode(from: container, forKey: .\($0.name))
+                    """
+                }.joined(separator: "\n"))
+            }
+            """,
+            """
+            init(from json: Any) throws {
+                guard let json = json as? [String: Any] else {
+                    throw JSONDecodingError.invalidType
+                }
+                \(raw: members.map {
+                    """
+                    guard let value = json["\($0.name)"] else {
+                        throw JSONDecodingError.missingRequiredProperty("\($0.name)")
+                    }
+                    self.\($0.name) = try \($0.type)(from: value)
                     """
                 }.joined(separator: "\n"))
             }
@@ -91,6 +106,14 @@ struct JSONSchemaMacro: ExtensionMacro, MemberMacro {
                                             ]
                                         ]
                                     }
+                                    static var properties: [String: JSONSchema.Property]? {
+                                        [\(raw: members.map {
+                                            """
+                                            "\($0.name)": JSONSchema.Property(type: \($0.type).jsonSchema["type"] as! String, items: \($0.type).jsonSchema["items"] as? JSONSchema.Items, description: "")
+                                            """
+                                        }.joined(separator: ","))]
+                                    }
+
                                 }
                                 """)
             ]

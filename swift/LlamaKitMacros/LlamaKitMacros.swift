@@ -59,7 +59,7 @@ struct LlamaActorMacro: ExtensionMacro, MemberMacro {
             // TODO: This should be better. It's basically dropping any non docstring comments
             // TODO: before the docstring comments.
             comments = Array(comments.drop(while: {
-                if case let .docLineComment(_) = $0 {
+                if case .docLineComment(_) = $0 {
                     return false
                 } else {
                     return true
@@ -79,19 +79,32 @@ struct LlamaActorMacro: ExtensionMacro, MemberMacro {
                 } else if let type = parameter.type.as(OptionalTypeSyntax.self),
                     let type = type.wrappedType.as(IdentifierTypeSyntax.self) {
                     typeName = type.name.text
-                } else {
+                } else if let type = parameter.type.as(ArrayTypeSyntax.self),
+                    let type = type.element.as(IdentifierTypeSyntax.self) {
+                    typeName = "[\(type.name.text)]"
+                }
+                else {
                     throw LlamaKitMacroError.message("Incorrect type for parameter \(parameter.debugDescription)")
                 }
                 guard case var .docLineComment(description) = comments[index + 1] else {
                     throw LlamaKitMacroError.message("Missing comment for \(firstName)")
                 }
-                description = String(description.dropFirst(3))
+                description = String(description.dropFirst("/// - parameter ".count + firstName.count + ":".count)).trimmingCharacters(in: .whitespacesAndNewlines)
                 parameters.append((name: firstName, type: typeName, description: description))
                 index += 1
             }
             let callableName = context.makeUniqueName(name.text)
             let callableString = """
             @dynamicCallable struct \(callableName.text): DynamicCallable {
+                \(parameters.map {
+                """
+                struct \($0.name)Arg: _Argument {
+                    typealias ArgType = \($0.type)
+                    static var argKey: String { "\($0.name)" }
+                }
+                """
+                }.joined(separator: "\n"))
+
                 private weak var llamaActor: \(typeName)?
                 init(_ llamaActor: \(typeName)) {
                     self.llamaActor = llamaActor
@@ -99,19 +112,10 @@ struct LlamaActorMacro: ExtensionMacro, MemberMacro {
             
                 @discardableResult
                 func dynamicallyCall(withKeywordArguments args: [String: Any]) async throws -> String {
+                    \(parameters.isEmpty ? "" : "let args = try extractArguments(\(parameters.map {$0.name + "Arg.self"}.joined(separator: ",")), from: args)")
                     \(parameters.map {
-                        "var \($0.name): \($0.type)!"
+                        "let \($0.name) = args[\"\($0.name)\"] as! \($0.type)"
                     }.joined(separator: "\n"))
-                    for (key, value) in args {
-                        \(parameters.map {
-                            """
-                            if key == "\($0.name)", let value = value as? AnyDecodable, case let .\($0.type.lowercased())(v) = value {
-                                    \($0.name) = v
-                            }
-                            """
-                        }.joined(separator: "\n"))
-                    }
-            
                     let returnValue = try await self.llamaActor!.\(name.text)(\(parameters.map { "\($0.name): \($0.name)" }.joined(separator: ",")))
                     let jsonValue = try JSONEncoder().encode(returnValue)
                     return String(data: jsonValue, encoding: .utf8)!
@@ -141,7 +145,7 @@ struct LlamaActorMacro: ExtensionMacro, MemberMacro {
                             """
                             "\(parameter.name)": _JSONFunctionSchema.Property(type: \(parameter.type).self, description: "\(parameter.description)"),
                             """
-                            }.joined() + "]"), required: [])))
+                            }.joined() + "]"), required: [\(tool.parameters.map { "\"\($0.name)\""}.joined(separator: ","))])))
                         """
                     }.joined(separator: ","))]
                 }

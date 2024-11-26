@@ -19,6 +19,10 @@ typedef int32_t LlamaToken;
 
 @interface LlamaModel : NSObject
 
+- (instancetype)initFromFile:(NSString *)path;
+- (NSArray<NSNumber *> *)tokenize:(NSString *)text
+                       addSpecial:(BOOL)addSpecial
+                     parseSpecial:(BOOL)parseSpecial;
 - (int)nEmbd;
 - (LlamaToken)tokenBOS;
 - (LlamaToken)tokenEOT;

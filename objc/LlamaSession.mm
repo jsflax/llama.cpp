@@ -192,7 +192,6 @@ static BOOL file_is_empty(NSString *path) {
 
 - (instancetype)initWithParams:(GPTParams *)params {
     self = [super init];
-    self->_params = [params copy];
     self->_mutableLastOutput = [[NSMutableString alloc] init];
     self->_queue = [BlockingLineQueue new];
     // Set the global locale to support UTF-8
@@ -298,10 +297,11 @@ static BOOL file_is_empty(NSString *path) {
         }
     }
     // print system information
-    @autoreleasepool {
-        NSLog(@"%s", common_params_get_system_info([params params]).c_str());
+    if (params.logging) {
+        @autoreleasepool {       
+            NSLog(@"%s", common_params_get_system_info([params params]).c_str());
+        }
     }
-    
     pathSession = [[NSMutableString alloc] initWithString:params.pathPromptCache];
     
     NSFileManager *fileManager = [NSFileManager defaultManager];
@@ -410,7 +410,11 @@ static BOOL file_is_empty(NSString *path) {
     } else {
         params.nKeep += addBOS; // always keep the BOS token
     }
-    
+    // Additionally, ensure n_keep does not exceed n_ctx
+    if (params.nKeep > n_ctx) {
+        os_log_info(os_log_inst, "n_keep (%d) exceeds n_ctx (%d). Capping n_keep to n_ctx.", params.nKeep, n_ctx);
+        params.nKeep = n_ctx;
+    }
     if (params.conversation) {
         params.interactiveFirst = true;
     }
@@ -547,6 +551,7 @@ static BOOL file_is_empty(NSString *path) {
     }
     
     [_queue logAppend:[params prompt]];
+    self->_params = [params copy];
     return self;
 }
 
@@ -664,11 +669,10 @@ static void llama_log_callback_null(ggml_log_level level, const char * text, voi
             os_log_debug(os_log_inst, "eval: %s\n", string_from([_ctx cContext], embd).c_str());
 
             os_log_debug(os_log_inst, "batch get one ptr idx: %d n_eval: %d, embd size:%d\n", i, n_eval, (int)embd.size());
-            if ([_ctx decode:[[LlamaBatch alloc] initWithBatch:llama_batch_get_one(&embd[i], n_eval)]]) {
+            if (llama_decode([_ctx cContext], llama_batch_get_one(&embd[i], n_eval))) {
                 os_log_error(os_log_inst, "%s : failed to eval\n", __func__);
                 [NSException raise:@"DecodingFailure" format:@"failed to decode batch"];
             }
-
             n_past += n_eval;
 
             os_log_debug(os_log_inst, "n_past = %d\n", n_past);
@@ -742,11 +746,13 @@ static void llama_log_callback_null(ggml_log_level level, const char * text, voi
         } else {
             // Outgoing Generated Tokens
             output_tokens.push_back(idToken);
-            output_ss << [token_str cStringUsingEncoding:NSUTF8StringEncoding];
-            last_output_ss << [token_str cStringUsingEncoding:NSUTF8StringEncoding];
-            [self willChangeValueForKey:@"lastOutput"];
-            [_mutableLastOutput appendString:token_str];
-            [self didChangeValueForKey:@"lastOutput"];
+//            output_ss << [token_str cStringUsingEncoding:NSUTF8StringEncoding];
+            if (token_str) {
+                last_output_ss << [token_str cStringUsingEncoding:NSUTF8StringEncoding];
+                [self willChangeValueForKey:@"lastOutput"];
+                [_mutableLastOutput appendString:token_str];
+                [self didChangeValueForKey:@"lastOutput"];
+            }
         }
     }
 }
@@ -882,7 +888,7 @@ static void llama_log_callback_null(ggml_log_level level, const char * text, voi
         for (size_t i = original_size; i < embd_inp.size(); ++i) {
             const llama_token token = embd_inp[i];
             output_tokens.push_back(token);
-            output_ss << [[self.ctx tokenToPiece:token] cStringUsingEncoding:NSUTF8StringEncoding];
+//            output_ss << [[self.ctx tokenToPiece:token] cStringUsingEncoding:NSUTF8StringEncoding];
         }
         // Reset assistant message
         assistant_ss.str("");
@@ -1010,6 +1016,7 @@ void saveConversationToPromptFile(NSString *conversation, NSString *promptFilePa
     [_queue dealloc];
     [self.smpl dealloc];
     [self.ctx dealloc];
+    llama_backend_free();
 //    [self.model dealloc];
     llama_backend_free();
     [threadpool dealloc];

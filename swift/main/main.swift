@@ -47,6 +47,12 @@ func downloadFile() async throws -> String {
         let (data, _) = try await URLSession.shared.data(from: URL(string: "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml")!)
         return String(data: data, encoding: .utf8)!
     }
+    
+    /// Reverse a given string.
+    /// - parameter string: The string to reverse.
+    @Tool public func reverse(string: String) async throws -> String {
+        String(string.reversed())
+    }
 }
 
 let params = GPTParams()

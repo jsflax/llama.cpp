@@ -19,6 +19,76 @@ import OSLog
     @Tool public func getSkyColor() async throws -> String {
         return "blue"
     }
+    
+    /// Reverse a given string.
+    /// - parameter string: String to reverse.
+    @Tool public func reverse(string: String) async throws -> String {
+        String(string.reversed())
+    }
+    
+    /// Reduce an array of integers into a sum
+    /// - parameter numbers: the numbers to get the sum of
+    @Tool public func sum(numbers: [Int]) async throws -> Int {
+        numbers.reduce(0, +)
+    }
+    
+    @JSONSchema struct Product: _CodableArgument {
+        let name: String
+        let price: Double
+    }
+    
+    /// Calculate the total price of products
+    /// - parameter products: the array of products to calculate the total price for
+    @Tool public func totalPrice(products: [Product]) async throws -> Double {
+        products.reduce(0) { $0 + $1.price }
+    }
+}
+
+@llamaActor actor LlamaChainTools {
+    @JSONSchema struct Product {
+        let name: String
+        let price: Double
+        
+        init(name: String, price: Double) {
+            self.name = name
+            self.price = price
+        }
+    }
+    
+    @JSONSchema struct ProductOptions {
+        let name: String
+        init(name: String) {
+            self.name = name
+        }
+    }
+    
+    /// Get a list of available products.
+    @Tool public func getAvailableProducts() async throws -> [Product] {
+        [
+            Product(name: "banana", price: 5),
+            Product(name: "apple", price: 3)
+        ]
+    }
+    
+    /// Get options for a provided product.
+    /// - parameter productName: the name of the product to get options for
+    @Tool public func getOptionsForProduct(productName: String) async throws -> [ProductOptions] {
+        if productName == "banana" {
+            return [.init(name: "plantain"), .init(name: "miniature")]
+        } else if productName == "apple" {
+            return [.init(name: "granny smith"), .init(name: "red delicious")]
+        } else {
+            abort()
+        }
+    }
+    
+    /// Add a product to the cart. This *must* only be called after options have been presented for a product.
+    /// - parameter product: the product to add to the cart
+    /// - parameter options: the chosen options for the product
+    @Tool public func addProductToCart(product: Product,
+                                       options: [ProductOptions]) async throws -> Bool {
+        return true
+    }
 }
 
 // MARK: LlamaGrammarSession Suite
@@ -60,7 +130,7 @@ struct LlamaSessionSuite {
     func baseParams(url: String, to path: String) async throws -> GPTParams {
         let params = GPTParams()
         params.modelPath = try await downloadFile(url: url, to: path)
-        params.nPredict = 4096
+        params.nPredict = 256
         params.nCtx = 4096
         params.cpuParams.nThreads = 8
         params.cpuParamsBatch.nThreads = 8
@@ -137,15 +207,22 @@ struct LlamaSessionSuite {
     
     // MARK: Tool Test
     @Test func llamaToolSession() async throws {
-        let params = try await baseParams(url: "https://huggingface.co/bartowski/Llama-3-Groq-8B-Tool-Use-GGUF/resolve/main/Llama-3-Groq-8B-Tool-Use-Q8_0.gguf?download=true", to: "llama_tools.gguf")
-        params.prompt = """
-        Try calling multiple tools at the same time.
-        """
-        let llama = try await MyLlama(params: params)
-        var output = try await llama.infer("What's my favorite animal?")
-        #expect(output.contains("cat"))
-        output = try await llama.infer("What's my favorite season?")
-        #expect(output.contains("autumn"))
+        
+        for i in 0..<10 {
+            print("Iteration: \(i)")
+            let params = try await baseParams(url: "https://huggingface.co/bartowski/Llama-3-Groq-8B-Tool-Use-GGUF/resolve/main/Llama-3-Groq-8B-Tool-Use-Q8_0.gguf?download=true", to: "llama_tools.gguf")
+            let llama = try await MyLlama(params: params)
+            var output = try await llama.infer("What's my favorite animal?")
+            try #require(output.contains("cat"))
+            output = try await llama.infer("What's my favorite season?")
+            try #require(output.contains("autumn"))
+            output = try await llama.infer("Reverse this string: \"hello world\"")
+            try #require(output.contains("dlrow olleh"))
+            output = try await llama.infer("Add these numbers together: 1 + 2")
+            try #require(output.contains("3"))
+            output = try await llama.infer("Get the total price for bananas that cost $2 and apples that cost $3")
+            try #require(output.contains("5"))
+        }
     }
 
     // MARK: Tool Test
@@ -255,5 +332,20 @@ struct LlamaSessionSuite {
         let embeddings = await session.embeddings(for: "sushi", isQuery: true)
         let embeddings2 = await session.embeddings(for: "Advancements in quantum computing technologies", isQuery: false)
         print(cosineSimilarity(vectorA: embeddings, vectorB: embeddings2))
+    }
+    
+    @Test func llamaChainTest() async throws {
+        let params = try await baseParams(url: "https://huggingface.co/bartowski/Llama-3-Groq-8B-Tool-Use-GGUF/resolve/main/Llama-3-Groq-8B-Tool-Use-Q8_0.gguf?download=true", to: "llama_tools.gguf")
+        let session = try await LlamaChainTools(params: params)
+        var output = try await session.infer("I would like to get a product")
+        print(output)
+        output = try await session.infer("I would like an apple")
+        print(output)
+        if output.contains("cart") {
+            output = try await session.infer("Yes")
+        } else {
+            output = try await session.infer("I would like red delicious")
+        }
+        print(output)
     }
 }
